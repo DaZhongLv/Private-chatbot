@@ -2,21 +2,39 @@ import os
 import shutil
 import gradio as gr
 import time
-from llama_index.llms.ollama import Ollama
-
-# This import is needed to structure the chat history correctly
 from llama_index.core.llms import ChatMessage, MessageRole
-# Configure the global settings for LlamaIndex
-# This sets the LLM and the embedding model for all subsequent operations.
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 from llama_index.core.embeddings import resolve_embed_model
 from llama_index.llms.ollama import Ollama
+from llama_index.core import StorageContext, load_index_from_storage
+
+
+PERSIST_DIR = "./storage"
+chat_engine = None
 
 # ---- 全局 LLM & Embedding 设置 ----
-llm = Ollama(model="llama3:8b", request_timeout=300.0)
+llm = Ollama(model="llama3.2:3b", request_timeout=300.0)
 Settings.llm = llm
-
 Settings.embed_model = resolve_embed_model("local:BAAI/bge-small-en-v1.5")
+
+
+def get_index(documents=None):
+    """
+    Loads the index from storage if it exists, otherwise builds it from documents.
+    If no documents are provided and the index doesn't exist, returns None.
+    """
+    if os.path.exists(PERSIST_DIR):
+        storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
+        index = load_index_from_storage(storage_context)
+        print("Loaded existing index.")
+    elif documents:
+        index = VectorStoreIndex.from_documents(documents)
+        index.storage_context.persist(persist_dir=PERSIST_DIR)
+        print("Built and saved a new index.")
+    else:
+        return None
+
+    return index
 
 
 
@@ -79,63 +97,96 @@ def chat_with_llm(message, history, system_prompt):
         yield response
 
 
-# ChatInterface 的 fn 需要 (message, history, *additional_inputs)
-def process_document_and_chat(message, history, file):
-    # message = 用户输入的问题
-    question = (message or "").strip()
-
-    if not question:
-        yield "Please ask a question first."
-        return
+def handle_file_upload(file):
+    """
+    Handles the file upload, creates an index, and initializes the chat engine.
+    """
+    global chat_engine
 
     if file is None:
-        yield "Please upload a document first."
-        return
+        return "Please upload a file."
 
     try:
-        # Gradio 6: file 是 NamedString，file.name 是实际文件路径（通常在 /tmp 目录）
-        if hasattr(file, "name"):
-            src_path = file.name
-        else:
-            src_path = str(file)
+        # Gradio 6: file 是 NamedString，file.name 是实际文件路径
+        src_path = file.name if hasattr(file, "name") else str(file)
 
-        # ---- 自己建临时目录 & 临时文件（真正要给 LlamaIndex 读的就是这个）----
+        # 临时目录：只复制副本，不动原文件
         temp_dir = "temp_docs"
         os.makedirs(temp_dir, exist_ok=True)
 
-        # 用原文件名复制一份到 temp_docs 里
         temp_file_path = os.path.join(temp_dir, os.path.basename(src_path))
+
+        # 把 src_path 复制一份到 temp_docs 里
         with open(src_path, "rb") as src, open(temp_file_path, "wb") as dst:
             shutil.copyfileobj(src, dst)
 
-        # 用临时文件喂给 SimpleDirectoryReader
-        loader = SimpleDirectoryReader(input_files=[temp_file_path])
+        # 用临时目录读取文档（和课程写法一致）
+        loader = SimpleDirectoryReader(input_dir=temp_dir)
         documents = loader.load_data()
 
-        # 建索引
-        index = VectorStoreIndex.from_documents(documents)
+        # 用 Day 7 的 get_index 来加载 / 构建持久化索引
+        index = get_index(documents)
 
-        # 聊天引擎
+        # 用 index 初始化全局 chat_engine（这是课程要求的关键）
         chat_engine = index.as_chat_engine(
             chat_mode="condense_question",
             verbose=True,
         )
 
-        # 流式回答
+        # 清理我们自己复制的临时文件
+        try:
+            os.remove(temp_file_path)
+        except OSError:
+            pass
+
+        return (
+            f"File '{os.path.basename(src_path)}' processed successfully. "
+            "You can now ask questions."
+        )
+
+    except Exception as e:
+        return f"An error occurred during file processing: {e}"
+
+
+
+def chat_with_document(message, history):
+    """
+    Handles the chat interaction using the global chat engine.
+    这个函数专门给 ChatInterface 用：输入 (message, history)，输出流式文本。
+    """
+    global chat_engine
+
+    question = (message or "").strip()
+    if not question:
+        # 没问题就直接提示
+        yield "Please ask a question first."
+        return
+
+    if chat_engine is None:
+        index = get_index()  # 不传 documents，只是尝试从磁盘加载
+        if index is not None:
+            chat_engine = index.as_chat_engine(
+                chat_mode="condense_question",
+                verbose=True,
+            )
+            print("Loaded chat_engine from persisted index.")
+        else:
+            # 磁盘上也没有 index，那就真的需要先上传文件
+            yield "Please upload and process a document first."
+            return
+
+    try:
+        # 用 chat_engine 做流式对话（和课程一样）
         response_stream = chat_engine.stream_chat(question)
+
         response = ""
         for r in response_stream.response_gen:
             response += r
             yield response
 
-        # 只删我们自己复制出来的那一份，不动原始文件
-        try:
-            os.remove(temp_file_path)
-        except OSError:
-            pass  # 删不掉也没关系，下次还能被覆盖
-
     except Exception as e:
         yield f"An error occurred: {e}"
+
 
 
 with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
@@ -166,28 +217,36 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
 
         gr.ClearButton([general_chatbot, general_textbox], value="Clear Chat")
 
-
     with gr.Tab("Chat with Documents"):
-        # 上传文件组件
-        file_upload = gr.File(label="Upload your PDF, DOCX, or TXT file")
+        with gr.Row():
+            file_upload = gr.File(
+                label="Upload documents (PDF, DOCX, TXT)"
+            )
+            process_button = gr.Button("Process Document(s)")
+            status_box = gr.Textbox(label="Status", interactive=False)
 
-        # 用 ChatInterface 自己来画聊天框和输入框
-        doc_interface = gr.ChatInterface(
-            fn=process_document_and_chat,
-            additional_inputs=[file_upload],  # 作为第三个参数传给 fn
-            chatbot=gr.Chatbot(height=400),
-            textbox=gr.Textbox(
-                label="Ask a question about your document",
-                placeholder="Ask a question about your document",
-                container=False,
-            ),
+        # 这里的 chatbot / textbox 交给 ChatInterface 统一管理
+        doc_chatbot = gr.Chatbot(height=400, label="Chat")
+        doc_textbox = gr.Textbox(
+            label="Ask a question",
+            placeholder="Ask something about your document...",
+            container=False,
         )
 
-        # 清空按钮：清聊天 + 输入框 + 上传文件
-        gr.ClearButton(
-            [doc_interface.chatbot, doc_interface.textbox, file_upload],
-            value="Clear Doc Chat",
+        # 文档聊天：用 chat_engine + stream_chat
+        gr.ChatInterface(
+            fn=chat_with_document,
+            chatbot=doc_chatbot,
+            textbox=doc_textbox,
         )
+
+        # 处理文件：单独一个按钮调用 handle_file_upload
+        process_button.click(
+            fn=handle_file_upload,
+            inputs=[file_upload],
+            outputs=[status_box],
+        )
+
 
 
 
