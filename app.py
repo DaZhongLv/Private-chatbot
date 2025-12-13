@@ -2,6 +2,8 @@ import os
 import shutil
 import gradio as gr
 import time
+import qdrant_client
+from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 from llama_index.core.embeddings import resolve_embed_model
@@ -113,35 +115,44 @@ def handle_file_processing_stateful(files):
 
     temp_paths = []
 
-    try:
-        # 把上传的每个文件复制一份到临时目录
-        for f in files:
-            src_path = f.name if hasattr(f, "name") else str(f)
-            tmp_path = os.path.join(temp_dir, os.path.basename(src_path))
+    
+    # 把上传的每个文件复制一份到临时目录
+    for f in files:
+        src_path = f.name if hasattr(f, "name") else str(f)
+        tmp_path = os.path.join(temp_dir, os.path.basename(src_path))
 
-            with open(src_path, "rb") as src, open(tmp_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+        with open(src_path, "rb") as src, open(tmp_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
 
-            temp_paths.append(tmp_path)
+        temp_paths.append(tmp_path)
 
-        # 用这些临时文件构建文档列表
-        loader = SimpleDirectoryReader(input_files=temp_paths)
-        documents = loader.load_data()
+    # 用这些临时文件构建文档列表
+    loader = SimpleDirectoryReader(input_files=temp_paths)
+    documents = loader.load_data()
 
-        # Day 8：每次重新建 index（还不做持久化）
-        index = VectorStoreIndex.from_documents(documents)
+    # Day 8：每次重新建 index（还不做持久化）
+    index = VectorStoreIndex.from_documents(documents)
 
-    finally:
-        # 清理我们自己复制出来的临时文件
-        for p in temp_paths:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-        try:
-            os.rmdir(temp_dir)
-        except OSError:
-            pass
+    # ========= 这里开始改成 Qdrant 版本 =========
+    # 1) 连接本地 Qdrant（Docker 容器）
+    client = qdrant_client.QdrantClient(host="localhost", port=6333)
+
+    # 2) 建一个 QdrantVectorStore，collection_name 可以自己起，
+    #    但后面要用同一个名字才能复用数据
+    vector_store = QdrantVectorStore(
+        client=client,
+        collection_name="private_chatbot_docs",
+    )
+
+    # 3) 用这个 vector_store 构建 storage_context
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+    # 4) 建索引，LlamaIndex 会自动把 embeddings 写入 Qdrant
+    index = VectorStoreIndex.from_documents(
+        documents,
+        storage_context=storage_context,
+    )
+    # ========= Qdrant 部分结束 =========
 
     gr.Info("Knowledge base created successfully! You can now ask questions.")
 
@@ -155,10 +166,32 @@ def chat_with_document_stateful(message, history, chat_engine):
     这是给 ChatInterface 用的：输入 (message, history, chat_engine)，输出流式文本。
     """
     if chat_engine is None:
-        # 说明还没点“Create Knowledge Base”
-        raise gr.Warning(
-            "Knowledge base not created yet. Please upload documents and click 'Create Knowledge Base'."
-        )
+        try:
+            client = qdrant_client.QdrantClient(host="localhost", port=6333)
+            vector_store = QdrantVectorStore(
+                client=client,
+                collection_name="private_chatbot_docs",  # 要和 handle_file_processing_stateful 里一致
+            )
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+            # 从已有的向量库重建索引
+            index = VectorStoreIndex.from_vector_store(
+                vector_store=vector_store,
+                storage_context=storage_context,
+            )
+
+            chat_engine = index.as_chat_engine(
+                chat_mode="condense_question",
+                verbose=True,
+            )
+            print("Rebuilt chat_engine from existing Qdrant collection.")
+
+        except Exception as e:
+            # 如果 Qdrant 还没有这个 collection，就提示用户先创建
+            raise gr.Warning(
+                f"Knowledge base not ready yet. Please upload documents and click 'Create Knowledge Base'. "
+                f"(Details: {e})"
+            )
 
     question = (message or "").strip()
     if not question:
@@ -204,32 +237,32 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
 
         gr.ClearButton([general_chatbot, general_textbox], value="Clear Chat")
 
-        with gr.Tab("Chat with Documents"):
-        # 这个隐藏组件用来存 chat_engine，对每个浏览器会话是独立的
-            chat_engine_state = gr.State(None)
+    with gr.Tab("Chat with Documents"):
+    # 这个隐藏组件用来存 chat_engine，对每个浏览器会话是独立的
+        chat_engine_state = gr.State(None)
 
-            with gr.Row():
-                with gr.Column(scale=2):
-                    file_upload = gr.File(
-                        label="Upload documents to create a knowledge base",
-                        file_count="multiple",   # 多文件
-                    )
-                    process_button = gr.Button("Create Knowledge Base", variant="primary")
+        with gr.Row():
+            with gr.Column(scale=2):
+                file_upload = gr.File(
+                    label="Upload documents to create a knowledge base",
+                    file_count="multiple",   # 多文件
+                )
+                process_button = gr.Button("Create Knowledge Base", variant="primary")
 
-                with gr.Column(scale=3):
-                    gr.ChatInterface(
-                        fn=chat_with_document_stateful,
-                        additional_inputs=[chat_engine_state],
-                        chatbot=gr.Chatbot(height=500, label="Chat with Your Documents"),
-                    )
+            with gr.Column(scale=3):
+                gr.ChatInterface(
+                    fn=chat_with_document_stateful,
+                    additional_inputs=[chat_engine_state],
+                    chatbot=gr.Chatbot(height=500, label="Chat with Your Documents"),
+                )
 
-            # 按钮：处理文件 -> 返回 chat_engine -> 存进 chat_engine_state
-            process_button.click(
-                fn=handle_file_processing_stateful,
-                inputs=[file_upload],
-                outputs=[chat_engine_state],
-                show_progress="full",
-            )
+        # 按钮：处理文件 -> 返回 chat_engine -> 存进 chat_engine_state
+        process_button.click(
+            fn=handle_file_processing_stateful,
+            inputs=[file_upload],
+            outputs=[chat_engine_state],
+            show_progress="full",
+        )
 
 
 
