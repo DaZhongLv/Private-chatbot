@@ -204,7 +204,7 @@ def chat_with_llm(message, history, system_prompt):
 # ---------------------------------------------------------------------
 # Document upload & Qdrant-backed knowledge base (stateful)
 # ---------------------------------------------------------------------
-def handle_file_processing_stateful(files, chunk_size, chunk_overlap):
+def handle_file_processing_stateful(files, chunk_size, chunk_overlap, top_k):
     """
     Process uploaded files, build a Qdrant-backed index, and return a chat engine.
 
@@ -297,44 +297,58 @@ def handle_file_processing_stateful(files, chunk_size, chunk_overlap):
         except OSError:
             pass
 
-    gr.Info("Knowledge base created successfully! You can now ask questions.")
+    top_k = int(top_k)
+
+    chat_engine = index.as_chat_engine(
+    chat_mode="condense_question",
+    similarity_top_k=top_k,
+    verbose=True,
+    )
+
+    gr.Info(f"Knowledge base created successfully! top_k={top_k}. You can now ask questions.")
 
     # Return a chat engine built on top of this index.
     # ChatInterface will store this object inside gr.State.
-    return index.as_chat_engine(chat_mode="condense_question", verbose=True)
+    return chat_engine, top_k
 
 
-def chat_with_document_stateful(message, history, chat_engine):
+def chat_with_document_stateful(message, history, chat_engine, top_k):
     """
     Streaming chat handler for the 'Chat with Documents' tab.
 
-    This function uses the chat_engine stored in gr.State. If the engine is
-    missing (e.g., after an app restart), it will attempt to reconstruct a
-    new engine from the existing Qdrant collection.
+    This version accepts `top_k` so that if the app restarts (chat_engine is None),
+    we can rebuild a chat engine from the existing Qdrant collection with the same
+    retrieval setting.
 
     Parameters
     ----------
     message : str
         Latest user question from the textbox.
     history : list
-        Conversation history from Gradio ChatInterface (ignored here, since
-        LlamaIndex maintains its own internal chat history).
+        Conversation history from Gradio ChatInterface (ignored; LlamaIndex engine keeps its own memory).
     chat_engine : Optional[BaseChatEngine]
-        Engine previously created by handle_file_processing_stateful and stored
-        in gr.State, or None at the beginning of a session.
+        Engine created earlier and stored in gr.State.
+    top_k : int or None
+        Number of most relevant chunks to retrieve. Stored in gr.State as well.
 
     Yields
     ------
     str
         Partial response text chunks, streamed back to the Gradio UI.
     """
+    # Normalize / default top_k
+    try:
+        top_k_int = int(top_k) if top_k is not None else 3
+    except Exception:
+        top_k_int = 3
+
     # If chat_engine is None, try to rebuild it from the Qdrant vector store.
     if chat_engine is None:
         try:
             client = qdrant_client.QdrantClient(host="localhost", port=6333)
             vector_store = QdrantVectorStore(
                 client=client,
-                collection_name="private_chatbot_docs",  # must match the name used above
+                collection_name="private_chatbot_docs",  # must match handle_file_processing_stateful
             )
             storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
@@ -344,15 +358,25 @@ def chat_with_document_stateful(message, history, chat_engine):
                 storage_context=storage_context,
             )
 
-            chat_engine = index.as_chat_engine(
-                chat_mode="condense_question",
-                verbose=True,
-            )
-            print("Rebuilt chat_engine from existing Qdrant collection.")
+            # Build chat engine with configurable retrieval
+            # (Some LlamaIndex versions accept similarity_top_k here; if not, fall back to retriever.)
+            try:
+                chat_engine = index.as_chat_engine(
+                    chat_mode="condense_question",
+                    similarity_top_k=top_k_int,
+                    verbose=True,
+                )
+            except TypeError:
+                retriever = index.as_retriever(similarity_top_k=top_k_int)
+                chat_engine = index.as_chat_engine(
+                    chat_mode="condense_question",
+                    retriever=retriever,
+                    verbose=True,
+                )
+
+            print(f"Rebuilt chat_engine from existing Qdrant collection (top_k={top_k_int}).")
 
         except Exception as e:
-            # If Qdrant doesn't have this collection yet (or is unavailable),
-            # ask the user to create the knowledge base first.
             raise gr.Warning(
                 "Knowledge base not ready yet. Please upload documents and click "
                 "'Create Knowledge Base'. "
@@ -361,11 +385,10 @@ def chat_with_document_stateful(message, history, chat_engine):
 
     question = (message or "").strip()
     if not question:
-        # Empty input: nothing to answer, but ChatInterface expects a generator.
         yield ""
         return
 
-    # Use LlamaIndex's streaming API to generate the answer.
+    # Stream answer from the chat engine
     response_stream = chat_engine.stream_chat(question)
 
     response = ""
@@ -411,6 +434,8 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
     with gr.Tab("Chat with Documents"):
         # Hidden state object that holds the chat_engine for this browser session.
         chat_engine_state = gr.State(None)
+        top_k_state = gr.State(3)
+
 
         with gr.Row():
             # Left column: upload + "Create Knowledge Base" button
@@ -441,11 +466,20 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
                     info="Amount of overlap between consecutive chunks."
                 )
 
+                top_k_slider = gr.Slider(
+                    minimum=1,
+                    maximum=10,
+                    value=3,
+                    step=1,
+                    label="Top-K",
+                    info="Number of most relevant chunks to retrieve."
+                )
+
             # Right column: chat UI grounded in the uploaded documents
             with gr.Column(scale=3):
                 gr.ChatInterface(
                     fn=chat_with_document_stateful,
-                    additional_inputs=[chat_engine_state],
+                    additional_inputs=[chat_engine_state, top_k_state],
                     chatbot=gr.Chatbot(height=500, label="Chat with Your Documents"),
                 )
 
@@ -455,10 +489,11 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
         #   - Gradio stores that engine value inside chat_engine_state
         process_button.click(
             fn=handle_file_processing_stateful,
-            inputs=[file_upload, chunk_size_slider, chunk_overlap_slider],
-            outputs=[chat_engine_state],
+            inputs=[file_upload, chunk_size_slider, chunk_overlap_slider, top_k_slider],
+            outputs=[chat_engine_state, top_k_state],
             show_progress="full",
-        )
+            )
+
 
 
 if __name__ == "__main__":
