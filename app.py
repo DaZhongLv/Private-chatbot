@@ -28,6 +28,7 @@ import shutil
 import gradio as gr
 import time  # currently not used, but kept in case we want timing / logging later
 import qdrant_client
+import requests
 
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core.llms import ChatMessage, MessageRole
@@ -95,6 +96,23 @@ def get_index(documents=None):
         return None
 
     return index
+
+def get_ollama_models():
+    """
+    Fetches the list of locally available models from the Ollama API.
+    Returns a list of model names like ["llama3.2:3b", "phi3:latest", ...]
+    """
+    try:
+        r = requests.get("http://localhost:11434/api/tags", timeout=3)
+        r.raise_for_status()
+        data = r.json()
+        models = data.get("models", [])
+        return [m.get("name") for m in models if m.get("name")]
+    except requests.exceptions.RequestException:
+        # 不要在这里 raise gr.Warning（启动时会直接炸 app）
+        print("[WARN] Ollama server not reachable at http://localhost:11434. Model list empty.")
+        return []
+
 
 
 # ---------------------------------------------------------------------
@@ -167,36 +185,19 @@ def _history_to_chatmessages(history):
 # ---------------------------------------------------------------------
 # General Chat (no documents)
 # ---------------------------------------------------------------------
-def chat_with_llm(message, history, system_prompt):
-    """
-    Streaming chat handler for the 'General Chat' tab.
+def chat_with_llm(message, history, system_prompt, model_name):
+    if not model_name:
+        raise gr.Warning("No model selected. Please choose a model from the dropdown.")
 
-    Parameters
-    ----------
-    message : str
-        Latest user message from the textbox.
-    history : list
-        Chat history as provided by Gradio ChatInterface.
-    system_prompt : str
-        System prompt text from the "System Prompt" textbox.
+    # 用用户选择的模型创建临时 LLM（不动 Settings.llm，避免影响 Documents 引擎）
+    temp_llm = Ollama(model=model_name, request_timeout=300.0)
 
-    Yields
-    ------
-    str
-        Partial response text chunks, to be streamed back to the UI.
-    """
-    # 1) Start with system prompt
     messages = [ChatMessage(role="system", content=system_prompt)]
-
-    # 2) Append previous conversation history
     messages.extend(_history_to_chatmessages(history))
-
-    # 3) Append latest user message
     messages.append(ChatMessage(role="user", content=message))
 
-    # 4) Stream the LLM response back to Gradio
     response = ""
-    for r in llm.stream_chat(messages):
+    for r in temp_llm.stream_chat(messages):
         response += (r.delta or "")
         yield response
 
@@ -406,6 +407,14 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
     # ---------- Tab 1: General Chat ----------
     with gr.Tab("General Chat"):
         # User-configurable system prompt for the general chat LLM.
+        model_list = get_ollama_models()
+
+        model_dropdown = gr.Dropdown(
+            label="Select a Model",
+            choices=model_list,
+            value=(model_list[0] if model_list else None),
+            interactive=True,
+        )
         system_prompt_box = gr.Textbox(
             label="System Prompt",
             placeholder="e.g., You are a cynical pirate who has seen it all.",
@@ -425,7 +434,7 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
             fn=chat_with_llm,
             chatbot=general_chatbot,
             textbox=general_textbox,
-            additional_inputs=[system_prompt_box],
+            additional_inputs=[system_prompt_box, model_dropdown],
         )
 
         gr.ClearButton([general_chatbot, general_textbox], value="Clear Chat")
