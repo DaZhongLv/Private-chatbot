@@ -1,29 +1,32 @@
 """
 app.py
 
-A small local RAG application with two main capabilities:
+Private Chatbot with Local LLM
 
-1. General Chat:
-   - Simple chat UI backed by a local Ollama LLM (llama3.2:3b).
-   - User can customize the system prompt.
-
-2. Chat with Documents:
-   - User uploads one or more documents (PDF, DOCX, TXT).
-   - Documents are loaded via LlamaIndex's SimpleDirectoryReader.
-   - Embeddings are stored in a Qdrant vector database running locally in Docker.
-   - A chat engine is created on top of this vector store and stored in gr.State.
-   - After an app restart, the chat engine can be rebuilt from the existing Qdrant
-     collection, so the knowledge base persists across sessions.
+Two tabs:
+1) General Chat (Ollama) with dynamic model switching + streaming
+2) Chat with Documents (LlamaIndex + Qdrant) with:
+   - configurable chunking/top_k
+   - persona/system prompt (via chat_mode="context")
+   - source chunks display
+   - live status line (retrieving/thinking + elapsed seconds)
+   - collection strategy:
+       * Fixed collection  (persistent library)
+       * Unique per upload (avoid mixing)
+   - optional reset (delete collection before ingest)
 """
 
 import os
+import re
 import shutil
-import time  # currently not used, but kept in case we want timing / logging later
+import time
+import hashlib
 import traceback
+import concurrent.futures
 
 import gradio as gr
-import qdrant_client
 import requests
+import qdrant_client
 
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core.llms import ChatMessage
@@ -32,46 +35,48 @@ from llama_index.core import (
     SimpleDirectoryReader,
     Settings,
     StorageContext,
-    load_index_from_storage,
 )
 from llama_index.core.embeddings import resolve_embed_model
 from llama_index.llms.ollama import Ollama
 from llama_index.core.node_parser import SentenceSplitter
 
 
-# ---------------------------------------------------------------------
+# =============================================================================
 # Global configuration
-# ---------------------------------------------------------------------
+# =============================================================================
 
-PERSIST_DIR = "./storage"
+Settings.llm = Ollama(model="llama3.2:3b", request_timeout=300.0)
 
-llm = Ollama(model="llama3.2:3b", request_timeout=300.0)
-Settings.llm = llm
+def _init_embed_model():
+    """
+    NOTE:
+    第一次跑会下载 embedding 模型权重（正常现象），之后会走缓存。
+    如果你经常重装环境/清缓存，就会反复下载。
+    """
+    try:
+        # multilingual (better if you ask in Chinese)
+        return resolve_embed_model("local:BAAI/bge-small-en-v1.5")   # bge-m3
+    except Exception:
+        print("[WARN] local:BAAI/bge-m3 not available, fallback to bge-small-en-v1.5")
+        return resolve_embed_model("local:BAAI/bge-small-en-v1.5")
 
-Settings.embed_model = resolve_embed_model("local:BAAI/bge-small-en-v1.5")
+Settings.embed_model = _init_embed_model()
+
+_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
-# ---------------------------------------------------------------------
-# Optional helper: load a file-based index if present (Day 8 style)
-# ---------------------------------------------------------------------
-def get_index(documents=None):
-    if os.path.exists(PERSIST_DIR):
-        storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-        index = load_index_from_storage(storage_context)
-        print("Loaded existing index.")
-    elif documents:
-        index = VectorStoreIndex.from_documents(documents)
-        index.storage_context.persist(persist_dir=PERSIST_DIR)
-        print("Built and saved a new index.")
-    else:
-        return None
-    return index
+# =============================================================================
+# Helpers
+# =============================================================================
+
+def _safe_slug(s: str) -> str:
+    s = (s or "default").strip().lower()
+    s = re.sub(r"[^a-z0-9_\-]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or "default"
 
 
 def get_ollama_models():
-    """
-    Fetches list of locally available models from Ollama API.
-    """
     try:
         r = requests.get("http://localhost:11434/api/tags", timeout=3)
         r.raise_for_status()
@@ -79,66 +84,105 @@ def get_ollama_models():
         models = data.get("models", [])
         return [m.get("name") for m in models if m.get("name")]
     except requests.exceptions.RequestException:
-        print("[WARN] Ollama server not reachable at http://localhost:11434. Model list empty.")
+        print("[WARN] Ollama not reachable at http://localhost:11434. Model list empty.")
         return []
 
 
-# ---------------------------------------------------------------------
-# Gradio history <-> LlamaIndex ChatMessage utilities (General Chat only)
-# ---------------------------------------------------------------------
-def _extract_text(content):
-    if content is None:
+def _extract_text(x) -> str:
+    """
+    Normalize Gradio inputs into plain string.
+
+    - str -> str
+    - dict like {"text": "..."} -> "..."
+    - list of blocks [{"type":"text","text":"..."}] -> joined string
+    """
+    if x is None:
         return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
+    if isinstance(x, str):
+        return x
+    if isinstance(x, dict):
+        # common: {"text": "...", "type": "text"}
+        if "text" in x and isinstance(x["text"], str):
+            return x["text"]
+        return str(x)
+    if isinstance(x, list):
         parts = []
-        for blk in content:
-            if isinstance(blk, dict):
-                if blk.get("type") == "text" and "text" in blk:
-                    parts.append(blk["text"])
-                elif "text" in blk:
+        for blk in x:
+            if isinstance(blk, str):
+                parts.append(blk)
+            elif isinstance(blk, dict):
+                if "text" in blk and isinstance(blk["text"], str):
                     parts.append(blk["text"])
         return "".join(parts)
-    return ""
+    return str(x)
 
 
 def _history_to_chatmessages(history):
+    """
+    Convert Gradio ChatInterface history to LlamaIndex ChatMessage list.
+    history example: [{"role":"user","content":"..."}, ...]
+    """
     msgs = []
-    if not history:
-        return msgs
-
-    if isinstance(history[0], dict):
+    history = history or []
+    if history and isinstance(history[0], dict):
         for h in history:
             role = h.get("role", "user")
             text = _extract_text(h.get("content")).strip()
             if text:
                 msgs.append(ChatMessage(role=role, content=text))
-        return msgs
-
-    if isinstance(history[0], (list, tuple)) and len(history[0]) == 2:
-        for u, a in history:
-            if u:
-                msgs.append(ChatMessage(role="user", content=str(u)))
-            if a:
-                msgs.append(ChatMessage(role="assistant", content=str(a)))
-        return msgs
-
     return msgs
 
 
-# ---------------------------------------------------------------------
-# General Chat (no documents) - streaming
-# ---------------------------------------------------------------------
+def _format_sources(resp) -> str:
+    """
+    Format retrieved evidence chunks into Markdown.
+
+    resp.source_nodes: List[NodeWithScore]
+      - nws.node: Node
+      - nws.score: float
+      - node.metadata: may include file_name/filename/source
+      - node.get_content(): chunk text
+    """
+    source_nodes = getattr(resp, "source_nodes", None) or []
+    md = "### Retrieved Sources\n\n"
+
+    if not source_nodes:
+        md += "_No source nodes returned._"
+        return md
+
+    for i, nws in enumerate(source_nodes):
+        node = getattr(nws, "node", nws)
+        score = getattr(nws, "score", None)
+
+        meta = getattr(node, "metadata", {}) or {}
+        file_name = meta.get("file_name") or meta.get("filename") or meta.get("source") or "N/A"
+
+        if hasattr(node, "get_content"):
+            chunk_text = node.get_content() or ""
+        else:
+            chunk_text = getattr(node, "text", "") or ""
+
+        score_str = f"{score:.4f}" if isinstance(score, (int, float)) else "N/A"
+        md += f"**Source {i+1}** — `{file_name}` (score: {score_str})\n\n"
+        md += f"```text\n{chunk_text.strip()}\n```\n\n"
+
+    return md
+
+
+# =============================================================================
+# Tab 1: General Chat (streaming)
+# =============================================================================
+
 def chat_with_llm(message, history, system_prompt, model_name):
     if not model_name:
         raise gr.Warning("No model selected. Please choose a model from the dropdown.")
 
     temp_llm = Ollama(model=model_name, request_timeout=300.0)
 
-    messages = [ChatMessage(role="system", content=system_prompt)]
+    msg = _extract_text(message)
+    messages = [ChatMessage(role="system", content=_extract_text(system_prompt))]
     messages.extend(_history_to_chatmessages(history))
-    messages.append(ChatMessage(role="user", content=message))
+    messages.append(ChatMessage(role="user", content=msg))
 
     response = ""
     for r in temp_llm.stream_chat(messages):
@@ -146,161 +190,182 @@ def chat_with_llm(message, history, system_prompt, model_name):
         yield response
 
 
-# ---------------------------------------------------------------------
-# Document upload & Qdrant-backed knowledge base (stateful)
-# ---------------------------------------------------------------------
-def handle_file_processing_stateful(files, chunk_size, chunk_overlap, top_k):
-    if files is None or len(files) == 0:
-        raise gr.Warning("No files uploaded. Please upload documents to create a knowledge base.")
+# =============================================================================
+# Tab 2: Documents - Build KB (Qdrant) + Chat with Sources + Persona
+# =============================================================================
 
+def handle_file_processing_stateful(
+    files,
+    chunk_size,
+    chunk_overlap,
+    top_k,
+    system_prompt,
+    kb_name,
+    collection_mode,
+    reset_collection,
+):
+    if not files:
+        raise gr.Warning("No files uploaded. Please upload documents first.")
+
+    chunk_size = int(chunk_size)
+    chunk_overlap = int(chunk_overlap)
+    top_k = int(top_k)
+
+    # chunking settings for ingestion
+    Settings.node_parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    # copy files into temp folder and compute stable hash
     temp_dir = "temp_docs_for_processing"
     os.makedirs(temp_dir, exist_ok=True)
 
+    sha1 = hashlib.sha1()
     temp_paths = []
-
-    Settings.node_parser = SentenceSplitter(
-        chunk_size=int(chunk_size),
-        chunk_overlap=int(chunk_overlap),
-    )
-
     for f in files:
         src_path = f.name if hasattr(f, "name") else str(f)
-        tmp_path = os.path.join(temp_dir, os.path.basename(src_path))
+        base = os.path.basename(src_path)
+        dst_path = os.path.join(temp_dir, base)
 
-        with open(src_path, "rb") as src, open(tmp_path, "wb") as dst:
-            shutil.copyfileobj(src, dst)
+        with open(src_path, "rb") as src, open(dst_path, "wb") as dst:
+            while True:
+                buf = src.read(1024 * 1024)
+                if not buf:
+                    break
+                sha1.update(buf)
+                dst.write(buf)
 
-        temp_paths.append(tmp_path)
+        temp_paths.append(dst_path)
 
+    file_hash = sha1.hexdigest()[:12]
+    kb_slug = _safe_slug(_extract_text(kb_name))
+
+    # collection naming
+    if collection_mode == "Fixed collection":
+        collection_name = f"private_chatbot_{kb_slug}"
+    else:
+        collection_name = f"private_chatbot_{kb_slug}_{file_hash}"
+
+    # load docs
     loader = SimpleDirectoryReader(input_files=temp_paths)
     documents = loader.load_data()
 
-    # Qdrant
+    # connect qdrant
     client = qdrant_client.QdrantClient(host="localhost", port=6333)
 
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name="private_chatbot_docs",
-    )
+    if reset_collection:
+        try:
+            client.delete_collection(collection_name=collection_name)
+            print(f"[Qdrant] deleted collection: {collection_name}")
+        except Exception:
+            pass
 
+    vector_store = QdrantVectorStore(client=client, collection_name=collection_name)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-    index = VectorStoreIndex.from_documents(
-        documents,
-        storage_context=storage_context,
-    )
+    # build index + write embeddings
+    index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
 
-    try:
-        info = client.get_collection("private_chatbot_docs")
-        print("[Qdrant] collection info:", info)
-    except Exception as e:
-        print("[Qdrant] get_collection failed:", e)
-
+    # cleanup temp copies
     for p in temp_paths:
         try:
             os.remove(p)
         except OSError:
             pass
 
-    top_k = int(top_k)
-
+    # persona support (IMPORTANT)
     chat_engine = index.as_chat_engine(
-        chat_mode="condense_question",
+        chat_mode="context",
         similarity_top_k=top_k,
+        system_prompt=_extract_text(system_prompt),
         verbose=True,
     )
 
-    gr.Info(f"Knowledge base created successfully! top_k={top_k}. You can now ask questions.")
+    kb_info_md = (
+        f"✅ **Knowledge base ready**\n\n"
+        f"- Collection: `{collection_name}`\n"
+        f"- Mode: **{collection_mode}**\n"
+        f"- chunk_size={chunk_size}, overlap={chunk_overlap}, top_k={top_k}\n"
+        f"- reset={bool(reset_collection)}\n"
+    )
 
-    return chat_engine, top_k
+    return chat_engine, kb_info_md
 
-
-# ---------------------------------------------------------------------
-# Chat with Documents: show answer + retrieved sources
-#   - generator: first yield placeholder so the question appears immediately
-#   - returns 3 outputs: (chatbot_history, sources_markdown, cleared_textbox)
-# ---------------------------------------------------------------------
-import traceback
-
-import traceback
 
 def chat_with_sources(message, history, chat_engine):
     """
-    messages-format Chatbot history:
-      history = [{"role": "user"/"assistant", "content": "..."} , ...]
-    Returns 4 outputs:
-      (history, sources_markdown, cleared_textbox, status_markdown)
-    """
-    question = (message or "").strip()
+    Outputs:
+      (chat_history, sources_md, cleared_textbox, status_md)
 
-    if history is None:
-        history = []
-    history = list(history)
+    - chat_history: list of {"role":"user/assistant", "content": "..."}
+    - sources_md: Markdown of retrieved chunks
+    - cleared_textbox: "" (clears input)
+    - status_md: progress line with elapsed seconds
+    """
+    t0 = time.perf_counter()
+
+    question = _extract_text(message).strip()
+    history = list(history or [])
+
+    source_text = ""
+    status_text = ""
 
     if not question:
-        yield history, "", "", ""
+        yield history, source_text, "", status_text
         return
 
-    if chat_engine is None:
-        raise gr.Warning("Knowledge base not created yet. Please click 'Create Knowledge Base' first.")
+    # ✅ 防呆：避免你现在遇到的 "str has no attribute chat"
+    if chat_engine is None or not hasattr(chat_engine, "chat"):
+        raise gr.Warning(
+            "Chat engine is not ready (state is invalid). "
+            "Please click 'Create Knowledge Base' again. "
+            "If this keeps happening, your click outputs order is wrong."
+        )
 
-    # 1) 先把 user message 放进 chat（但不放processing）
+    # show user message immediately
     history.append({"role": "user", "content": question})
+    yield history, source_text, "", f"🔎 Retrieving… ({time.perf_counter()-t0:.1f}s)"
 
-    # 显示 status，并清空输入框
-    yield history, "", "", "🤔 *…Thinking…*"
+    # run heavy call in background thread so seconds can update
+    def _run():
+        return chat_engine.chat(question)
 
-    # 2) RAG call
+    future = _EXECUTOR.submit(_run)
+
+    while not future.done():
+        elapsed = time.perf_counter() - t0
+        yield history, source_text, "", f"🤔 Thinking… ({elapsed:.1f}s)"
+        time.sleep(0.25)
+
     try:
-        resp = chat_engine.chat(question)
+        resp = future.result()
     except Exception as e:
         tb = traceback.format_exc()
         history.append({"role": "assistant", "content": f"❌ Error: {type(e).__name__}: {e}"})
-        src_md = f"### Error\n\n**{type(e).__name__}:** {e}\n\n```text\n{tb}\n```"
-        yield history, src_md, "", ""   # 清空 status
+        source_text = f"### Error\n\n**{type(e).__name__}:** {e}\n\n```text\n{tb}\n```"
+        yield history, source_text, "", ""
         return
 
     answer_text = getattr(resp, "response", None) or str(resp)
     history.append({"role": "assistant", "content": answer_text})
 
-    # 3) sources
     try:
-        source_nodes = getattr(resp, "source_nodes", None) or []
-        source_text = "### Retrieved Sources\n\n"
-
-        for i, nws in enumerate(source_nodes):
-            node = getattr(nws, "node", nws)
-            score = getattr(nws, "score", None)
-
-            meta = getattr(node, "metadata", {}) or {}
-            file_name = meta.get("file_name") or meta.get("filename") or meta.get("source") or "N/A"
-
-            if hasattr(node, "get_content"):
-                chunk_text = node.get_content() or ""
-            else:
-                chunk_text = getattr(node, "text", "") or ""
-
-            score_str = f"{score:.4f}" if isinstance(score, (int, float)) else "N/A"
-            source_text += f"**Source {i+1}** — `{file_name}` (score: {score_str})\n\n"
-            source_text += f"```text\n{chunk_text.strip()}\n```\n\n"
-
+        source_text = _format_sources(resp)
     except Exception as e:
         tb = traceback.format_exc()
         source_text = f"### Retrieved Sources (formatting failed)\n\n**{type(e).__name__}:** {e}\n\n```text\n{tb}\n```"
 
-    # 4) 最终输出：sources + 清空 status
+    elapsed = time.perf_counter() - t0
+    yield history, source_text, "", f"✅ Done ({elapsed:.1f}s)"
     yield history, source_text, "", ""
 
 
+# =============================================================================
+# UI
+# =============================================================================
 
-
-# ---------------------------------------------------------------------
-# Gradio UI layout
-# ---------------------------------------------------------------------
-with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
     gr.Markdown("# Private Chatbot with Local LLM")
 
-    # ---------- Tab 1: General Chat ----------
+    # ------------------ Tab 1: General Chat ------------------
     with gr.Tab("General Chat"):
         model_list = get_ollama_models()
 
@@ -313,17 +378,12 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
 
         system_prompt_box = gr.Textbox(
             label="System Prompt",
-            placeholder="e.g., You are a cynical pirate who has seen it all.",
             value="You are a helpful and friendly assistant.",
-            interactive=True,
+            lines=3,
         )
 
-        general_chatbot = gr.Chatbot(height=500)  # keep default (messages), used by ChatInterface
-        general_textbox = gr.Textbox(
-            placeholder="Ask me anything...",
-            container=False,
-            scale=7,
-        )
+        general_chatbot = gr.Chatbot(height=500, label="General Chat")
+        general_textbox = gr.Textbox(placeholder="Ask me anything...", container=False)
 
         gr.ChatInterface(
             fn=chat_with_llm,
@@ -334,13 +394,12 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
 
         gr.ClearButton([general_chatbot, general_textbox], value="Clear Chat")
 
-    # ---------- Tab 2: Chat with Documents ----------
+    # ------------------ Tab 2: Chat with Documents ------------------
     with gr.Tab("Chat with Documents"):
         chat_engine_state = gr.State(None)
-        top_k_state = gr.State(3)
 
         with gr.Row():
-            # Left column
+            # Left panel
             with gr.Column(scale=2):
                 file_upload = gr.File(
                     label="Upload documents to create a knowledge base",
@@ -348,41 +407,40 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
                 )
                 process_button = gr.Button("Create Knowledge Base", variant="primary")
 
-                gr.Markdown("### RAG Configuration")
+                with gr.Accordion("Advanced RAG Settings", open=True):
+                    chunk_size_slider = gr.Slider(128, 2048, value=512, step=64, label="Chunk Size")
+                    chunk_overlap_slider = gr.Slider(0, 512, value=50, step=16, label="Chunk Overlap")
+                    top_k_slider = gr.Slider(1, 10, value=3, step=1, label="Top-K")
 
-                chunk_size_slider = gr.Slider(
-                    minimum=128,
-                    maximum=2048,
-                    value=512,
-                    step=64,
-                    label="Chunk Size",
-                    info="Size of text chunks for the knowledge base.",
-                )
+                    kb_name_box = gr.Textbox(
+                        label="Knowledge Base Name",
+                        value="default",
+                    )
 
-                chunk_overlap_slider = gr.Slider(
-                    minimum=0,
-                    maximum=512,
-                    value=50,
-                    step=16,
-                    label="Chunk Overlap",
-                    info="Amount of overlap between consecutive chunks.",
-                )
+                    collection_mode_radio = gr.Radio(
+                        choices=["Unique per upload", "Fixed collection"],
+                        value="Fixed collection",
+                        label="Collection Strategy",
+                        info="Unique per upload avoids mixing old docs. Fixed collection builds a persistent library.",
+                    )
 
-                top_k_slider = gr.Slider(
-                    minimum=1,
-                    maximum=10,
-                    value=3,
-                    step=1,
-                    label="Top-K",
-                    info="Number of most relevant chunks to retrieve.",
-                )
+                    reset_collection_cb = gr.Checkbox(
+                        label="Reset collection (delete existing vectors before ingest)",
+                        value=True,
+                    )
 
-            # Right column
+                    system_prompt_docs = gr.Textbox(
+                        label="Document Assistant System Prompt",
+                        value="Answer strictly using the provided documents. If the documents do not contain the answer, say so.",
+                        lines=4,
+                    )
+
+                kb_info_md = gr.Markdown("")
+
+            # Right panel
             with gr.Column(scale=3):
-                # IMPORTANT: tuples mode, because we return [(user, assistant), ...]
                 chatbot_docs = gr.Chatbot(height=500, label="Chat with Your Documents")
-
-                status_md = gr.Markdown("") 
+                status_md = gr.Markdown("")
 
                 question_box_docs = gr.Textbox(
                     label="Ask a question",
@@ -390,30 +448,46 @@ with gr.Blocks(title="Private Chatbot", theme=gr.themes.Soft()) as demo:
                 )
 
                 with gr.Accordion("Retrieved Sources", open=False):
-                    source_markdown = gr.Markdown()
+                    source_markdown = gr.Markdown("")
 
-                # Submit -> 3 outputs so textbox clears
                 question_box_docs.submit(
                     fn=chat_with_sources,
                     inputs=[question_box_docs, chatbot_docs, chat_engine_state],
                     outputs=[chatbot_docs, source_markdown, question_box_docs, status_md],
                 )
 
+                gr.ClearButton(
+                    [chatbot_docs, question_box_docs, source_markdown, status_md],
+                    value="Clear",
+                )
 
-                gr.ClearButton([chatbot_docs, question_box_docs, source_markdown], value="Clear")
-
+        # ✅ 关键：outputs 顺序必须是 [chat_engine_state, kb_info_md]
         process_button.click(
             fn=handle_file_processing_stateful,
-            inputs=[file_upload, chunk_size_slider, chunk_overlap_slider, top_k_slider],
-            outputs=[chat_engine_state, top_k_state],
+            inputs=[
+                file_upload,
+                chunk_size_slider,
+                chunk_overlap_slider,
+                top_k_slider,
+                system_prompt_docs,
+                kb_name_box,
+                collection_mode_radio,
+                reset_collection_cb,
+            ],
+            outputs=[chat_engine_state, kb_info_md],
             show_progress="full",
+        ).then(
+            # Clear chat UI after rebuilding KB (recommended)
+            fn=lambda: ([], "", "", ""),
+            inputs=None,
+            outputs=[chatbot_docs, source_markdown, question_box_docs, status_md],
         )
 
 
 if __name__ == "__main__":
     demo.launch(
-        theme=gr.themes.Soft(),
         share=False,
         debug=True,
         show_error=True,
+        theme=gr.themes.Soft(),
     )
