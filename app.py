@@ -548,10 +548,35 @@ def chat_with_sources(message, history, chat_engine):
     yield history, source_text, "", "", gr.update(visible=True, value=md_path)
 
 
+def verify_services_running():
+    missing = []
+
+    # 1) Ollama
+    try:
+        requests.get("http://localhost:11434", timeout=1.5)
+    except Exception:
+        missing.append("Ollama (http://localhost:11434)")
+
+    # 2) Qdrant
+    try:
+        client = qdrant_client.QdrantClient(host="localhost", port=6333)
+        client.get_collections()
+    except Exception:
+        missing.append("Qdrant (localhost:6333)")
+
+    if missing:
+        print(
+            "[WARN] Missing services: "
+            + ", ".join(missing)
+            + ". App may not function correctly."
+        )
+
+
 # =============================================================================
 # UI
 # =============================================================================
 
+verify_services_running()
 with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
     gr.Markdown("# Private Chatbot with Local LLM")
 
@@ -605,7 +630,7 @@ with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
                     clear_button   = gr.Button("Clear Knowledge Base", variant="stop")
 
 
-                with gr.Accordion("Advanced RAG Settings", open=True):
+                with gr.Accordion("Advanced RAG Settings", open=False):
                     chunk_size_slider = gr.Slider(128, 2048, value=512, step=64, label="Chunk Size")
                     chunk_overlap_slider = gr.Slider(0, 512, value=50, step=16, label="Chunk Overlap")
                     top_k_slider = gr.Slider(1, 10, value=3, step=1, label="Top-K")
