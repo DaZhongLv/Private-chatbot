@@ -370,7 +370,7 @@ def handle_file_processing_stateful(
             f"- chunk_size={chunk_size}, overlap={chunk_overlap}, top_k={top_k}\n"
             f"- reset={bool(reset_collection)}\n"
         )
-        return chat_engine, kb_info_md
+        return chat_engine, kb_info_md, collection_name
 
     except gr.Error:
         # 你自己 raise 的 gr.Error，直接往上抛就行
@@ -388,6 +388,47 @@ def handle_file_processing_stateful(
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
+
+
+def clear_knowledge_base(collection_name: str):
+    """
+    Deletes the current Qdrant collection and clears UI/state.
+    """
+    try:
+        # 1) 没有正在跟踪的 collection：说明还没创建过 KB 或者已清空
+        if not collection_name:
+            gr.Warning("Knowledge base is already empty (no active collection).")  # queue enabled -> modal :contentReference[oaicite:3]{index=3}
+            return None, "", "", [], "", ""
+
+        # 2) 连接 Qdrant
+        client = qdrant_client.QdrantClient(host="localhost", port=6333)
+
+        # 3) 判断 collection 是否存在
+        cols = client.get_collections()
+        existing = {c.name for c in cols.collections}
+
+        if collection_name in existing:
+            # 删除整个 collection（清空所有向量与payload）:contentReference[oaicite:4]{index=4}
+            client.delete_collection(collection_name=collection_name)
+            gr.Info(f"Knowledge base cleared: {collection_name}")  # :contentReference[oaicite:5]{index=5}
+        else:
+            gr.Warning("Collection not found in Qdrant. It may already be empty.")
+
+        # 4) 清 UI + 清 state
+        # 返回顺序要和 clear_button.click(outputs=[...]) 完全一致
+        chat_engine = None
+        kb_info_md = ""
+        collection_name = ""
+        chatbot_history = []     # Chatbot value 清空
+        sources_md = ""
+        status_md = ""
+        return chat_engine, kb_info_md, collection_name, chatbot_history, sources_md, status_md
+
+    except Exception as e:
+        print(f"[ERROR] Error clearing knowledge base: {e}")
+        print(traceback.format_exc())
+        # raise gr.Error 会在 UI 弹红框 :contentReference[oaicite:6]{index=6}
+        raise gr.Error(f"Failed to clear knowledge base. Is Qdrant running? Details: {type(e).__name__}: {e}")
 
 
 
@@ -511,6 +552,7 @@ with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
     # ------------------ Tab 2: Chat with Documents ------------------
     with gr.Tab("Chat with Documents"):
         chat_engine_state = gr.State(None)
+        collection_name_state = gr.State("")
 
         with gr.Row():
             # Left panel
@@ -519,7 +561,10 @@ with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
                     label="Upload documents to create a knowledge base",
                     file_count="multiple",
                 )
-                process_button = gr.Button("Create Knowledge Base", variant="primary")
+                with gr.Row():
+                    process_button = gr.Button("Create Knowledge Base", variant="primary")
+                    clear_button   = gr.Button("Clear Knowledge Base", variant="stop")
+
 
                 with gr.Accordion("Advanced RAG Settings", open=True):
                     chunk_size_slider = gr.Slider(128, 2048, value=512, step=64, label="Chunk Size")
@@ -588,14 +633,22 @@ with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
                 collection_mode_radio,
                 reset_collection_cb,
             ],
-            outputs=[chat_engine_state, kb_info_md],
+            outputs=[chat_engine_state, kb_info_md, collection_name_state],  # ✅ 多一个 state
             show_progress="full",
         ).then(
-            # Clear chat UI after rebuilding KB (recommended)
             fn=lambda: ([], "", "", ""),
             inputs=None,
             outputs=[chatbot_docs, source_markdown, question_box_docs, status_md],
         )
+
+        clear_button.click(
+            fn=clear_knowledge_base,
+            inputs=[collection_name_state],
+            outputs=[chat_engine_state, kb_info_md, collection_name_state, chatbot_docs, source_markdown, status_md],
+            show_progress="full",
+        )
+
+
 
 
 if __name__ == "__main__":
