@@ -40,6 +40,11 @@ from llama_index.core.embeddings import resolve_embed_model
 from llama_index.llms.ollama import Ollama
 from llama_index.core.node_parser import SentenceSplitter
 
+import datetime
+import tempfile
+from pathlib import Path
+
+
 
 # =============================================================================
 # Global configuration
@@ -202,6 +207,44 @@ def _format_sources(resp) -> str:
     return md
 
 
+def format_chat_history_as_markdown(history_messages):
+    """
+    history_messages: list of dicts, each like {"role": "user"/"assistant", "content": "..."}
+    Returns: markdown string
+    """
+    if not history_messages:
+        return "No conversation history."
+
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    md = f"# Chat History\n*Exported on: {now}*\n\n"
+
+    for m in history_messages:
+        role = (m.get("role") or "assistant").strip()
+        content = _extract_text(m.get("content", "")).strip()
+        if not content:
+            continue
+
+        if role == "user":
+            md += f"**You:**\n\n{content}\n\n"
+        else:
+            md += f"**Assistant:**\n\n{content}\n\n"
+
+        md += "---\n\n"
+
+    return md
+
+
+def write_markdown_to_tempfile(md_text: str, filename: str = "chat_history.md") -> str:
+    """
+    Write markdown to an absolute path, return that path for DownloadButton.
+    Use absolute path to avoid relative-path issues in some Gradio 6 setups. :contentReference[oaicite:2]{index=2}
+    """
+    tmp_dir = Path(tempfile.gettempdir())
+    out_path = tmp_dir / filename
+    out_path.write_text(md_text, encoding="utf-8")
+    return str(out_path)
+
+
 # =============================================================================
 # UI-safe notifications + version-safe updates
 # =============================================================================
@@ -283,7 +326,7 @@ def handle_file_processing_stateful(
 ):
     if not files:
         ui_warn("No files uploaded. Please upload documents first.")
-        return None, ""
+        return None, "", ""
 
     temp_dir = "temp_docs_for_processing"
     temp_paths = []
@@ -434,31 +477,35 @@ def clear_knowledge_base(collection_name: str):
 
 def chat_with_sources(message, history, chat_engine):
     """
-    Gradio 6.x messages format:
+    Gradio 6 messages format:
       history = [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]
     Yields:
-      (history, sources_md, cleared_textbox, status_md)
+      (history, sources_md, "", status_md, download_button_update)
     """
     t0 = time.perf_counter()
+
     question = _extract_text(message).strip()
     history = list(history or [])
 
+    # 0) 空输入
     if not question:
-        yield history, "", "", ""
+        yield history, "", "", "", gr.update(visible=False, value=None)
         return
 
-    # KB not ready
+    # 1) KB 未就绪
     if chat_engine is None or not hasattr(chat_engine, "chat"):
         ui_warn("Knowledge base not created yet. Please click 'Create Knowledge Base' first.")
+        history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": "⚠️ Knowledge base not ready. Please create it first."})
-        yield history, "No sources (KB not ready).", "", ""
+        # 这里也可以允许下载（会下载当前对话提示），看你喜好；我这里先隐藏
+        yield history, "No sources (KB not ready).", "", "", gr.update(visible=False, value=None)
         return
 
-    # 1) 先显示用户消息 + assistant 占位（后面只更新最后一条）
+    # 2) 先显示用户问题
     history.append({"role": "user", "content": question})
-    history.append({"role": "assistant", "content": ""})
-    yield history, "", "", f"🔎 Retrieving… ({time.perf_counter()-t0:.1f}s)"
+    yield history, "", "", f"🔎 Retrieving… ({time.perf_counter()-t0:.1f}s)", gr.update(visible=False, value=None)
 
+    # 3) 后台线程跑 llamaindex
     def _run():
         return chat_engine.chat(question)
 
@@ -466,47 +513,39 @@ def chat_with_sources(message, history, chat_engine):
 
     while not future.done():
         elapsed = time.perf_counter() - t0
-        yield history, "", "", f"🤔 Thinking… ({elapsed:.1f}s)"
+        yield history, "", "", f"🤔 Thinking… ({elapsed:.1f}s)", gr.update(visible=False, value=None)
         time.sleep(0.25)
 
-    # 2) 拿结果
+    # 4) 拿结果
     try:
         resp = future.result()
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"[ERROR] chat_engine.chat failed: {e}")
-        print(tb)
-        history[-1]["content"] = f"❌ Error: {type(e).__name__}: {e}"
-        source_text = (
-            "### Error\n\n"
-            f"**{type(e).__name__}:** {e}\n\n"
-            "```text\n"
-            f"{tb}\n"
-            "```"
-        )
-        yield history, source_text, "", ""
+        print(f"[ERROR] chat_engine.chat failed: {e}\n{tb}")
+        history.append({"role": "assistant", "content": f"❌ Error: {type(e).__name__}: {e}"})
+        source_text = f"### Error\n\n**{type(e).__name__}:** {e}\n\n```text\n{tb}\n```"
+        yield history, source_text, "", "", gr.update(visible=False, value=None)
         return
 
     answer_text = getattr(resp, "response", None) or str(resp)
-    history[-1]["content"] = answer_text
+    history.append({"role": "assistant", "content": answer_text})
 
-    # 3) sources
+    # 5) sources
     try:
         source_text = _format_sources(resp)
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"[WARN] source formatting failed: {e}")
-        source_text = (
-            "### Retrieved Sources (formatting failed)\n\n"
-            f"**{type(e).__name__}:** {e}\n\n"
-            "```text\n"
-            f"{tb}\n"
-            "```"
-        )
+        print(f"[WARN] source formatting failed: {e}\n{tb}")
+        source_text = f"### Retrieved Sources (formatting failed)\n\n**{type(e).__name__}:** {e}\n\n```text\n{tb}\n```"
+
+    # 6) Day18: 导出 markdown -> 写临时文件 -> 给 DownloadButton
+    md_text = format_chat_history_as_markdown(history)
+    md_path = write_markdown_to_tempfile(md_text, filename="chat_history.md")
 
     elapsed = time.perf_counter() - t0
-    yield history, source_text, "", f"✅ Done ({elapsed:.1f}s)"
-    yield history, source_text, "", ""
+    # DownloadButton 更新：显示 + 指向文件路径
+    yield history, source_text, "", f"✅ Done ({elapsed:.1f}s)", gr.update(visible=True, value=md_path)
+    yield history, source_text, "", "", gr.update(visible=True, value=md_path)
 
 
 # =============================================================================
@@ -609,11 +648,18 @@ with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
                 with gr.Accordion("Retrieved Sources", open=False):
                     source_markdown = gr.Markdown("")
 
+                    download_button = gr.DownloadButton(
+                        label="Download Chat History",
+                        visible=False,
+                        value=None,
+                    )
+
                 question_box_docs.submit(
                     fn=chat_with_sources,
                     inputs=[question_box_docs, chatbot_docs, chat_engine_state],
-                    outputs=[chatbot_docs, source_markdown, question_box_docs, status_md],
+                    outputs=[chatbot_docs, source_markdown, question_box_docs, status_md, download_button],
                 )
+
 
                 gr.ClearButton(
                     [chatbot_docs, question_box_docs, source_markdown, status_md],
@@ -636,9 +682,9 @@ with gr.Blocks(title="Private Chatbot with Local LLM") as demo:
             outputs=[chat_engine_state, kb_info_md, collection_name_state],  # ✅ 多一个 state
             show_progress="full",
         ).then(
-            fn=lambda: ([], "", "", ""),
+            fn=lambda: ([], "", "", "", gr.update(visible=False, value=None)),
             inputs=None,
-            outputs=[chatbot_docs, source_markdown, question_box_docs, status_md],
+            outputs=[chatbot_docs, source_markdown, question_box_docs, status_md, download_button],
         )
 
         clear_button.click(
