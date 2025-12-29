@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+*.mov
+*.mp4
+storage/*
+week*.txt
+temp_docs_for_processing/*

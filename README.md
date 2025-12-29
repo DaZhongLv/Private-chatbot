@@ -1,38 +1,73 @@
-# Private Chatbot with Local LLM
+# Private Chatbot with Local LLMs and RAG
 
-This project is a **privacy-preserving RAG chatbot** that runs entirely on your local machine.  
-It has two main features:
+A secure, offline-first desktop application that allows you to chat with powerful language models and your own documents, ensuring 100% data privacy.
 
-1. **General Chat** — talk to a local LLM through a simple Gradio UI.
-2. **Chat with Documents** — upload PDFs / DOCX / TXT files and ask questions based on their content.
-   Document embeddings are stored in a **Qdrant vector database** running in Docker, so the knowledge base
-   persists across restarts.
+## ✨ Features
 
-Core stack:
+- **Local-First AI:** Runs entirely on your machine. No data ever leaves your computer.
+- **Model Flexibility:** Supports any model compatible with Ollama (Llama 3, Phi-3, Mistral, etc.). Switch between models with a dropdown menu.
+- **Chat with Your Documents:** Upload PDFs, DOCX, or TXT files to create a searchable knowledge base and get answers based on their content.
+- **Advanced RAG Pipeline:** Powered by LlamaIndex and a Qdrant vector database for efficient, state-of-the-art retrieval.
+- **Configurable & Transparent:** Interactively tune RAG parameters like chunk size and retrieval count. View the source chunks used for each answer to ensure accuracy.
+- **Professional UI:** Clean, intuitive interface built with Gradio, featuring knowledge base management and chat history export.
 
-- **Ollama** – runs the local LLMs (e.g. `llama3.2:3b`)
-- **LlamaIndex** – handles document ingestion, chunking and retrieval
-- **Qdrant** – vector database for persistent embeddings
-- **Gradio 6** – web UI for chatting with the model and your documents
 
----
+## 🛠️ Tech Stack
 
-## Prerequisites / Dependencies
+- **Language:** Python
+- **UI Framework:** Gradio
+- **RAG Framework:** LlamaIndex
+- **LLM Serving:** Ollama
+- **Vector Database:** Qdrant (via Docker)
+- **Document Parsers:** `pypdf`, `docx2txt`
 
-Before running the app, make sure you have:
 
-1. **Python 3.11** (and `venv`)
-2. **Ollama** installed and running  
-   - Install from the official website  
-   - Make sure the model you use in `app.py` is available, e.g.:
-     ```bash
-     ollama run llama3.2:3b
-     ```
-3. **Docker Desktop** installed and running  
-   This is required to run **Qdrant**, the vector database used for document storage.:contentReference[oaicite:1]{index=1}  
+## 🚀 Getting Started
 
-4. **Qdrant Docker container** running locally:  
+These instructions will get you a copy of the project up and running on your local machine.
 
-   ```bash
-   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+### Prerequisites
+
+- Python 3.9+
+- Docker Desktop (must be running)
+- Ollama (must be running)
+
+### Installation
+
+. **Clone the repository:**
+```bash
+git clone [https://github.com/DaZhongLv/private-chatbot.git\](https://github.com/DaZhongLv/private-chatbot.git)
+cd private-chatbot
+```
+. **Create and activate a virtual environment:**
+```bash
+# For Windows
+python -m venv venv
+.\\venv\\Scripts\\activate
+
+# For macOS/Linux  
+python3 \-m venv venv  
+source venv/bin/activate  
+```
+
+. **Install dependencies:**
+```bash
+pip install -r requirements.txt
+```
+. **Run dependent services:**
+- **Start Qdrant:**
+```bash
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+```
+- **Download an Ollama model** (if you haven't already):
+```bash
+ollama pull llama3:8b
+```
+. **Run the application:**
+```bash
+python app.py
+```
+The application will now be running at `http://127.0.0.1:7860\`.  
+
+
 

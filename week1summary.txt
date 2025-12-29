@@ -1,4 +1,0 @@
-This week, I set up a complete local development environment and built a polished Gradio-based chatbot UI, using ChatInterface as the core scaffold for the app. I also integrated a local Ollama LLM for on-device inference, establishing a functional end-to-end loop from UI input to streamed model output. 
-
-I added two key feature upgrades: a user-editable system prompt that lets the user dynamically customize the chatbot’s personality via ChatInterface’s additional inputs, and a round of professional UI refinement, including a clear title and a cohesive theme for a cleaner, more presentable experience. These changes improve both usability and demo-readiness, and position the project well for the next step of expanding into document-aware or retrieval-based features.
-
