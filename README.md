@@ -2,6 +2,8 @@
 
 A secure, offline-first desktop application that allows you to chat with powerful language models and your own documents, ensuring 100% data privacy.
 
+![App Screenshot GIF](./app_demo.gif)
+
 ## ✨ Features
 
 - **Local-First AI:** Runs entirely on your machine. No data ever leaves your computer.
