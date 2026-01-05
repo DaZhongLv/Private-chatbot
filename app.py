@@ -88,21 +88,23 @@ from private_chatbot.utils import (
     write_markdown_to_tempfile,
 )
 
+from private_chatbot.services import get_ollama_models
 
 
-def get_ollama_models():
-    try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        r.raise_for_status()
-        data = r.json()
-        models = data.get("models", [])
-        return [m.get("name") for m in models if m.get("name")]
-    except requests.exceptions.RequestException as e:
-        print(f"[WARN] Ollama not reachable at http://localhost:11434/api/tags: {e}")  # :contentReference[oaicite:10]{index=10}
-        return []
-    except Exception as e:
-        print(f"[WARN] Unexpected error while fetching Ollama models: {e}")
-        return []
+
+# def get_ollama_models():
+#     try:
+#         r = requests.get("http://localhost:11434/api/tags", timeout=3)
+#         r.raise_for_status()
+#         data = r.json()
+#         models = data.get("models", [])
+#         return [m.get("name") for m in models if m.get("name")]
+#     except requests.exceptions.RequestException as e:
+#         print(f"[WARN] Ollama not reachable at http://localhost:11434/api/tags: {e}")  # :contentReference[oaicite:10]{index=10}
+#         return []
+#     except Exception as e:
+#         print(f"[WARN] Unexpected error while fetching Ollama models: {e}")
+#         return []
 
 def refresh_ollama_models():
     models = get_ollama_models()
