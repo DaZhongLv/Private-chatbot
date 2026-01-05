@@ -74,11 +74,20 @@ _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 # Helpers
 # =============================================================================
 
-def _safe_slug(s: str) -> str:
-    s = (s or "default").strip().lower()
-    s = re.sub(r"[^a-z0-9_\-]+", "_", s)
-    s = re.sub(r"_+", "_", s).strip("_")
-    return s or "default"
+# def _safe_slug(s: str) -> str:
+#     s = (s or "default").strip().lower()
+#     s = re.sub(r"[^a-z0-9_\-]+", "_", s)
+#     s = re.sub(r"_+", "_", s).strip("_")
+#     return s or "default"
+
+from private_chatbot.utils import (
+    _safe_slug,
+    _extract_text,
+    _history_to_chatmessages,
+    format_chat_history_as_markdown,
+    write_markdown_to_tempfile,
+)
+
 
 
 def get_ollama_models():
@@ -105,69 +114,69 @@ def refresh_ollama_models():
 
 
 
-def _extract_text(x) -> str:
-    """
-    Normalize Gradio inputs into plain string.
+# def _extract_text(x) -> str:
+#     """
+#     Normalize Gradio inputs into plain string.
 
-    - str -> str
-    - dict like {"text": "..."} -> "..."
-    - list of blocks [{"type":"text","text":"..."}] -> joined string
-    """
-    if x is None:
-        return ""
-    if isinstance(x, str):
-        return x
-    if isinstance(x, dict):
-        # common: {"text": "...", "type": "text"}
-        if "text" in x and isinstance(x["text"], str):
-            return x["text"]
-        return str(x)
-    if isinstance(x, list):
-        parts = []
-        for blk in x:
-            if isinstance(blk, str):
-                parts.append(blk)
-            elif isinstance(blk, dict):
-                if "text" in blk and isinstance(blk["text"], str):
-                    parts.append(blk["text"])
-        return "".join(parts)
-    return str(x)
+#     - str -> str
+#     - dict like {"text": "..."} -> "..."
+#     - list of blocks [{"type":"text","text":"..."}] -> joined string
+#     """
+#     if x is None:
+#         return ""
+#     if isinstance(x, str):
+#         return x
+#     if isinstance(x, dict):
+#         # common: {"text": "...", "type": "text"}
+#         if "text" in x and isinstance(x["text"], str):
+#             return x["text"]
+#         return str(x)
+#     if isinstance(x, list):
+#         parts = []
+#         for blk in x:
+#             if isinstance(blk, str):
+#                 parts.append(blk)
+#             elif isinstance(blk, dict):
+#                 if "text" in blk and isinstance(blk["text"], str):
+#                     parts.append(blk["text"])
+#         return "".join(parts)
+#     return str(x)
 
 
-def _history_to_chatmessages(history):
-    """
-    Accept either:
-    1) messages format: [{"role":"user","content":"..."}, ...]
-    2) tuples format:   [("user msg","assistant msg"), ...]  or [["u","a"], ...]
-    """
-    msgs = []
-    history = history or []
+# def _history_to_chatmessages(history):
+#     """
+#     Accept either:
+#     1) messages format: [{"role":"user","content":"..."}, ...]
+#     2) tuples format:   [("user msg","assistant msg"), ...]  or [["u","a"], ...]
+#     """
+#     msgs = []
+#     history = history or []
 
-    if not history:
-        return msgs
+#     if not history:
+#         return msgs
 
-    # messages format
-    if isinstance(history[0], dict):
-        for h in history:
-            role = h.get("role", "user")
-            text = _extract_text(h.get("content")).strip()
-            if text:
-                msgs.append(ChatMessage(role=role, content=text))
-        return msgs
+#     # messages format
+#     if isinstance(history[0], dict):
+#         for h in history:
+#             role = h.get("role", "user")
+#             text = _extract_text(h.get("content")).strip()
+#             if text:
+#                 msgs.append(ChatMessage(role=role, content=text))
+#         return msgs
 
-    # tuples/list-of-2 format
-    for item in history:
-        if not item:
-            continue
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            u, a = item[0], item[1]
-            u = _extract_text(u).strip()
-            a = _extract_text(a).strip()
-            if u:
-                msgs.append(ChatMessage(role="user", content=u))
-            if a:
-                msgs.append(ChatMessage(role="assistant", content=a))
-    return msgs
+#     # tuples/list-of-2 format
+#     for item in history:
+#         if not item:
+#             continue
+#         if isinstance(item, (list, tuple)) and len(item) >= 2:
+#             u, a = item[0], item[1]
+#             u = _extract_text(u).strip()
+#             a = _extract_text(a).strip()
+#             if u:
+#                 msgs.append(ChatMessage(role="user", content=u))
+#             if a:
+#                 msgs.append(ChatMessage(role="assistant", content=a))
+#     return msgs
 
 
 
@@ -207,42 +216,42 @@ def _format_sources(resp) -> str:
     return md
 
 
-def format_chat_history_as_markdown(history_messages):
-    """
-    history_messages: list of dicts, each like {"role": "user"/"assistant", "content": "..."}
-    Returns: markdown string
-    """
-    if not history_messages:
-        return "No conversation history."
+# def format_chat_history_as_markdown(history_messages):
+#     """
+#     history_messages: list of dicts, each like {"role": "user"/"assistant", "content": "..."}
+#     Returns: markdown string
+#     """
+#     if not history_messages:
+#         return "No conversation history."
 
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    md = f"# Chat History\n*Exported on: {now}*\n\n"
+#     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#     md = f"# Chat History\n*Exported on: {now}*\n\n"
 
-    for m in history_messages:
-        role = (m.get("role") or "assistant").strip()
-        content = _extract_text(m.get("content", "")).strip()
-        if not content:
-            continue
+#     for m in history_messages:
+#         role = (m.get("role") or "assistant").strip()
+#         content = _extract_text(m.get("content", "")).strip()
+#         if not content:
+#             continue
 
-        if role == "user":
-            md += f"**You:**\n\n{content}\n\n"
-        else:
-            md += f"**Assistant:**\n\n{content}\n\n"
+#         if role == "user":
+#             md += f"**You:**\n\n{content}\n\n"
+#         else:
+#             md += f"**Assistant:**\n\n{content}\n\n"
 
-        md += "---\n\n"
+#         md += "---\n\n"
 
-    return md
+#     return md
 
 
-def write_markdown_to_tempfile(md_text: str, filename: str = "chat_history.md") -> str:
-    """
-    Write markdown to an absolute path, return that path for DownloadButton.
-    Use absolute path to avoid relative-path issues in some Gradio 6 setups. :contentReference[oaicite:2]{index=2}
-    """
-    tmp_dir = Path(tempfile.gettempdir())
-    out_path = tmp_dir / filename
-    out_path.write_text(md_text, encoding="utf-8")
-    return str(out_path)
+# def write_markdown_to_tempfile(md_text: str, filename: str = "chat_history.md") -> str:
+#     """
+#     Write markdown to an absolute path, return that path for DownloadButton.
+#     Use absolute path to avoid relative-path issues in some Gradio 6 setups. :contentReference[oaicite:2]{index=2}
+#     """
+#     tmp_dir = Path(tempfile.gettempdir())
+#     out_path = tmp_dir / filename
+#     out_path.write_text(md_text, encoding="utf-8")
+#     return str(out_path)
 
 
 # =============================================================================
