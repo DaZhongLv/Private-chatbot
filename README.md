@@ -72,4 +72,18 @@ python app.py
 The application will now be running at `http://127.0.0.1:7860\`.  
 
 
+---
+
+## 🧪 Running Tests
+
+This project uses `pytest` for unit testing. Tests are located in the `tests/` directory and cover core utility logic and external-service wrappers (mocked).
+
+### Setup
+
+1. Activate your virtual environment.
+
+2. Install testing dependencies:
+
+```bash
+pip install pytest pytest-mock pytest-cov
 
