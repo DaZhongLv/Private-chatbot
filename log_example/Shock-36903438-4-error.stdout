@@ -1,9 +1,0 @@
---------------------------------------------------------------------------
-prterun detected that one or more processes exited with non-zero status,
-thus causing the job to be terminated. The first process to do so was:
-
-   Process name: [prterun-v007-31130@1,1]
-   Exit code:    1
---------------------------------------------------------------------------
-mv: cannot stat '/ocean/projects/mat250018p/lvlvmei/Shock/scratch/KC-%A-%a-error.stdout': No such file or directory
-mv: cannot stat '/ocean/projects/mat250018p/lvlvmei/Shock/scratch/KC-%A-%a.stdout': No such file or directory

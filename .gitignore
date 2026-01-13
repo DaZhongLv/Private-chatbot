@@ -8,3 +8,6 @@ __pycache__/
 storage/*
 week*.txt
 temp_docs_for_processing/*
+
+log_example/
+
