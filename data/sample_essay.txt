@@ -1,0 +1,496 @@
+Combined Extracted Text (4 documents)
+Generated: 2026-01-13 08:06:11
+
+================================================================================
+DOCUMENT: Retrieval-Augmented Generation (RAG).docx
+================================================================================
+
+Not only are foundation models stuck in the past, but they intentionally produce natural-sounding and varied responses. Both of these can lead to confidently inaccurate and irrelevant output. This behavior is known as “hallucination.”
+In this article, we’ll explore the limitations of foundation models and how retrieval-augmented generation (RAG) can address these limitations so chat, search, and agentic workflows can all benefit.
+Limitations of foundation models
+Products built on top of foundation models alone are brilliant yet flawed as foundation models have multiple limitations:
+Knowledge cutoffs
+When you ask current models about recent events – like asking about last week’s NBA basketball game or how to use features in the latest iPhone model - they may confidently provide outdated or completely fabricated information, the hallucinations we mentioned earlier.
+Models are trained on massive datasets containing years of human knowledge and creative output from code repositories, books, websites, conversations, scientific papers, and more. But after a model is trained, this data is frozen at a specific point in time, the “cutoff”. This cutoff creates a knowledge gap, leading them to generate plausible but incorrect responses when asked about recent developments.
+Lack depth in domain-specific knowledge
+Foundation models have broad knowledge, but can lack depth in specialized domains. High quality datasets might not exist publicly for a domain, not necessarily because they are private, but because they are highly specialized. Consider a medical model that knows about anatomy, disease, and surgical techniques, but struggles with rare genetic conditions and cutting edge therapies. This data might exist publicly to be used during training, but it may not appear enough to train the model correctly. It also requires expert-level knowledge during the training process to contextualize the information.
+This limitation can result in responses that are incomplete or irrelevant.
+Lack private or proprietary data
+In the case of general-purpose, public models, the data (your data) does not exist publicly and is inaccessible during training. This means that models don’t know the specifics of your business, whether that be internal company processes and policies, personnel data or email communications, or even the trade secrets of your company. And for good reason: if this data had been included in the training, anyone using the model would potentially gain access to your company’s private and proprietary data.
+Again, this limitation can result in incomplete or irrelevant responses, limiting the usefulness of the model for your custom business purpose.
+Loses trust
+Models typically cannot cite their sources related to a specific response. Without citations or references, the user either has to trust the response or validate the claim themselves. Given that models are trained on vast amounts of public data, there is a chance that the generated response is the result of an unauthoritative source.
+When inaccurate, irrelevant, and useless information is generated, users will lose trust in the model itself, even when this behavior is inherent in how foundation models work.
+Output generation is probabilistic
+Hallucinations are often a symptom of the limitations just described. However, models are trained on a diverse set of data that can contain contradictions, errors, and ambiguous data (in addition to the correct data). Because of this, models assign probabilities to all possible continuations, even the wrong ones. Because of sampling randomness like temperature and top k combined with how a user constructs a prompt (maybe it’s too vague or contains misleading context), models may choose the wrong continuation. The result is output that can contain hallucinations.
+Additionally, models don’t always distinguish between what they know vs what they don’t know, sounding confident even when incomplete, inaccurate, or irrelevant. Hallucinations can produce unwanted behaviors and even be dangerous. For example, an inaccurate but highly convincing medical report could lead to life-threatening treatments or no treatment at all.
+These foundation model limitations can impact your business bottom line and erode the trust of your users. Retrieval-augmented generation can address these limitations.
+What is Retrieval-Augmented Generation?
+Retrieval-augmented generation, or RAG, is a technique that uses authoritative, external data to improve the accuracy, relevancy, and usefulness of a model’s output. It does this through the following four core components, which we’ll cover in more detail later in this article:
+Ingestion: authoritative data like company proprietary data is loaded into a data source, like a Pinecone vector database
+Retrieval: relevant data is retrieved from an external data source based on a user query
+Augmentation: the retrieved data and the user query are combined into a prompt to provide the model with context for the generation step
+Generation: the model generates output from the augmented prompt, using the context to drive a more accurate and relevant response.
+
+Traditional RAG
+By combining relevant data from an external data source with the user’s query and providing it to the model as context for the generation step, the model will use it to generate a more accurate and relevant output.
+RAG provides the following benefits:
+Access to real-time data and proprietary or domain-specific data: bring in knowledge relevant to your situation - current events, news, social media, customer data, proprietary data
+Builds trust: more relevant and accurate results are more likely to earn trust and source citations allow human review
+More control: control over which sources are used, real-time data access, authorization to data, guardrails/safety/compliance, traceability/source citations, retrieval strategies, cost, tune each component independently of the others
+Cost-effective compared to alternatives like training/re-training your own model, fine-tuning, or stuffing the context window: foundation models are costly to produce and require specialized knowledge to create, as is fine-tuning; the larger the context sent to the model, the higher the cost
+RAG in support of agentic workflows
+But this traditional RAG approach is simple, often with a vector database and a one-shot prompt with context sent to the model to generate output. With the rise of AI agents, agents are now orchestrators of the core RAG components to:
+construct more effective queries
+access additional retrieval tools
+evaluate the accuracy and relevance of the retrieved context
+apply reasoning to validate retrieved information, to trust or discard it.
+These operations can be performed by an agent or agents as part of a larger, iterative plan. Agents as orchestrators of RAG bring even more opportunities for review, revision of queries, reasoning or validation of context, allowing them to make better decisions, take more informed actions, and generate more accurate and relevant output.
+Now that we’ve covered what RAG is, let’s take a deeper dive into how it works.
+How does Retrieval-Augmented Generation work?
+RAG brings accuracy and relevancy to LLM output by relying on authoritative data sources like proprietary, domain-specific data and real-time information. But before we dig into how it does that, let’s ask the questions: do you even need RAG and how will you know it’s working?
+This is where ground truth evaluations come in. In order to properly deploy any application, you need to know when it's working. AI applications are no different, and so identifying a set of queries and their expected answers is critical to knowing if your application is working. Maintaining that evaluation set is also critical to knowing where to improve over time, and whether those improvements are working. RAG itself is just one optimization, but there are others like query rewriting, chunk expansion, knowledge graphs and more.
+With a good baseline, you can move on to implementing the four main components of RAG:
+Ingestion
+In simple traditional RAG, you’ll retrieve data from a vector database like Pinecone, using semantic search to find the true meaning of the user’s query and retrieve relevant information instead of simply matching keywords in the query. We’ll use Pinecone as an example here, but the concept applies to all vector databases.
+But before we can retrieve the data, you have to ingest the data. Here are steps to get data into your database:
+Chunk the data
+During the ingestion step, you’ll load your authoritative data as vectors into Pinecone. You may have structured or unstructured data in the form of text, PDFs, emails, internal wikis, or databases. After cleaning the data, you may need to chunk it by dividing each piece of data, or document, into smaller chunks. Depending on the kind of data you have, the types of queries your users have, and how the results will be used in your application, you’ll need to choose a chunking strategy.
+Create vector embeddings
+Then, using an embedding model, you’ll embed each chunk and load it into the vector database. The embedding model is a special type of LLM that converts the data chunk into a vector embedding, a numerical representation of the data’s meaning. This allows computers to search for similar items based on the vector representation of the stored data.
+Load data into a vector database
+Once you have vectors, you’ll load them into a vector database. This ingestion step most likely happens offline, independently of your application and your user’s workflow. However, if your data changes, for instance, product inventory is updated, you can update the index in real-time to provide up-to-date information to your users.
+Now that your vector database contains the vector embeddings of your source data, the next step is retrieval.
+Retrieval
+A simple approach to retrieval would use semantic search alone. But by using hybrid search, combining both semantic search (with dense vectors) and lexical search (with sparse vectors), you can improve the retrieval results even more. This becomes relevant when your users don’t always use the same language to talk about a topic (semantic search) and they refer to internal, domain-specific language (lexical or keyword search) like acronyms, product names, or team names.
+During retrieval, we’ll create a vector embedding from the user’s query to use for searching against the vectors in the database. In hybrid search, you’ll query either a single hybrid index or both a dense and a sparse index. Then we combine and de-duplicate the results and use a reranking model to rerank them based on a unified relevance score, and return the most relevant matches.
+Augmentation
+Now that you have the most relevant matches from the retrieval step, you’ll create an augmented prompt with both the search results and the user’s query to send to the LLM. This is where the magic happens.
+An augmented prompt might look like this:
+QUESTION:
+<the user's question>
+
+CONTEXT:
+<the search results to use as context>
+
+Using the CONTEXT provided, answer the QUESTION. Keep your answer grounded in the facts of the CONTEXT. If the CONTEXT doesn't contain the answer to the QUESTION, say you don't know.
+By sending both the search results and the user’s question as context to the LLM, you are encouraging it to use the more accurate and relevant info from the search results during the next generation step.
+Generation
+Using the augmented prompt, the LLM now has access to the most pertinent and grounding facts from your vector database so your application can provide an accurate answer for your user, reducing the likelihood of hallucination.
+But RAG is no longer simply about searching for the right piece of information to inform a model response. With agentic RAG, it's about deciding which questions to ask, which tools to use, when to use them, and then aggregating results to ground answers.
+
+Agentic RAG
+In this simple version, the LLM is the agent and decides which retrieval tools to use and when, and how to query those tools.
+Wrapping up
+Retrieval-augmented generation has evolved from a buzzword to an indispensable foundation for AI applications. It blends the broad capabilities of foundation models with your company’s authoritative and proprietary knowledge. With AI agents handling more complex use cases, from those supporting professionals servicing complex manufacturing equipment to delivering domain-specific agents at scale, RAG is not just relevant in 2025. It’s critical for building accurate, relevant, and responsible AI applications that go beyond information retrieval. As AI agents become more autonomous and handle more complex workflows, they’ll need to ground their reasoning in your private and domain-specific data through RAG. The question is no longer whether to implement RAG, but how to architect it most effectively for your unique use case and data requirements.
+Want to dig into a RAG code example? Create a free Pinecone account and check out our example notebooks to implement retrieval-augmented generation with Pinecone or get started with Pinecone Assistant, to build production-grade chat and agent-based applications quickly.
+
+================================================================================
+DOCUMENT: What is RAG - Retrieval-Augmented Generation AI Explained - AWS.pdf
+================================================================================
+
+What is RAG? - Retrieval-Augmented Generation AI Explained - AWS
+https://aws.amazon.com/what-is/retrieval-augmented-generation/[12/28/25, 6:17:17 PM]
+Skip to main content
+Filter: All
+English
+Contact us
+AWS Marketplace
+Support
+My account
+re:Invent
+Discover AWS
+Products
+More
+Search
+Filter: All
+Sign in to console
+Create account
+What is Cloud Computing?›
+Cloud Computing Concepts Hub›
+Artificial Intelligence›
+Generative AI
+What is RAG (Retrieval-Augmented Generation)?
+Create an AWS Account
+Ask a Qu
+
+What is RAG? - Retrieval-Augmented Generation AI Explained - AWS
+https://aws.amazon.com/what-is/retrieval-augmented-generation/[12/28/25, 6:17:17 PM]
+Page topics
+What is Retrieval-Augmented Generation?
+Why is Retrieval-Augmented Generation important?
+What are the benefits of Retrieval-Augmented Generation?
+How does Retrieval-Augmented Generation work?
+What is the difference between Retrieval-Augmented Generation and semantic search?
+How can AWS support your Retrieval-Augmented Generation requirements?
+What is Retrieval-Augmented Generation?
+Retrieval-Augmented Generation (RAG) is the process of optimizing the output of a large language model, so it
+references an authoritative knowledge base outside of its training data sources before generating a response. Large
+Language Models (LLMs) are trained on vast volumes of data and use billions of parameters to generate original output
+for tasks like answering questions, translating languages, and completing sentences. RAG extends the already powerful
+capabilities of LLMs to specific domains or an organization's internal knowledge base, all without the need to retrain the
+model. It is a cost-effective approach to improving LLM output so it remains relevant, accurate, and useful in various
+contexts.
+Why is Retrieval-Augmented Generation important?
+LLMs are a key artificial intelligence (AI) technology powering intelligent chatbots and other natural language
+processing (NLP) applications. The goal is to create bots that can answer user questions in various contexts by cross-
+referencing authoritative knowledge sources. Unfortunately, the nature of LLM technology introduces unpredictability
+in LLM responses. Additionally, LLM training data is static and introduces a cut-off date on the knowledge it has.
+Known challenges of LLMs include:
+Presenting false information when it does not have the answer.
+Presenting out-of-date or generic information when the user expects a specific, current response.
+Creating a response from non-authoritative sources.
+Creating inaccurate responses due to terminology confusion, wherein different training sources use the same
+terminology to talk about different things.
+You can think of the Large Language Model as an over-enthusiastic new employee who refuses to stay informed with
+current events but will always answer every question with absolute confidence. Unfortunately, such an attitude can
+negatively impact user trust and is not something you want your chatbots to emulate!
+RAG is one approach to solving some of these challenges. It redirects the LLM to retrieve relevant information from
+authoritative, pre-determined knowledge sources. Organizations have greater control over the generated text output, and
+users gain insights into how the LLM generates the response.
+What are the benefits of Retrieval-Augmented Generation?
+RAG technology brings several benefits to an organization's generative AI efforts.
+Cost-effective implementation
+Chatbot development typically begins using a foundation model. Foundation models (FMs) are API-accessible LLMs
+
+What is RAG? - Retrieval-Augmented Generation AI Explained - AWS
+https://aws.amazon.com/what-is/retrieval-augmented-generation/[12/28/25, 6:17:17 PM]
+trained on a broad spectrum of generalized and unlabeled data. The computational and financial costs of retraining FMs
+for organization or domain-specific information are high. RAG is a more cost-effective approach to introducing new
+data to the LLM. It makes generative artificial intelligence (generative AI) technology more broadly accessible and
+usable.
+Current information
+Even if the original training data sources for an LLM are suitable for your needs, it is challenging to maintain relevancy.
+RAG allows developers to provide the latest research, statistics, or news to the generative models. They can use RAG to
+connect the LLM directly to live social media feeds, news sites, or other frequently-updated information sources. The
+LLM can then provide the latest information to the users.
+Enhanced user trust
+RAG allows the LLM to present accurate information with source attribution. The output can include citations or
+references to sources. Users can also look up source documents themselves if they require further clarification or more
+detail. This can increase trust and confidence in your generative AI solution.
+More developer control
+With RAG, developers can test and improve their chat applications more efficiently. They can control and change the
+LLM's information sources to adapt to changing requirements or cross-functional usage. Developers can also restrict
+sensitive information retrieval to different authorization levels and ensure the LLM generates appropriate responses. In
+addition, they can also troubleshoot and make fixes if the LLM references incorrect information sources for specific
+questions. Organizations can implement generative AI technology more confidently for a broader range of applications.
+How does Retrieval-Augmented Generation work?
+Without RAG, the LLM takes the user input and creates a response based on information it was trained on—or what it
+already knows. With RAG, an information retrieval component is introduced that utilizes the user input to first pull
+information from a new data source. The user query and the relevant information are both given to the LLM. The LLM
+uses the new knowledge and its training data to create better responses. The following sections provide an overview of
+the process.
+Create external data
+The new data outside of the LLM's original training data set is called external data. It can come from multiple data
+sources, such as a APIs, databases, or document repositories. The data may exist in various formats like files, database
+records, or long-form text. Another AI technique, called embedding language models, converts data into numerical
+representations and stores it in a vector database. This process creates a knowledge library that the generative AI models
+can understand.
+Retrieve relevant information
+The next step is to perform a relevancy search. The user query is converted to a vector representation and matched with
+the vector databases. For example, consider a smart chatbot that can answer human resource questions for an
+organization. If an employee searches, "How much annual leave do I have?" the system will retrieve annual leave policy
+documents alongside the individual employee's past leave record. These specific documents will be returned because
+they are highly-relevant to what the employee has input. The relevancy was calculated and established using
+
+What is RAG? - Retrieval-Augmented Generation AI Explained - AWS
+https://aws.amazon.com/what-is/retrieval-augmented-generation/[12/28/25, 6:17:17 PM]
+mathematical vector calculations and representations.
+Augment the LLM prompt
+Next, the RAG model augments the user input (or prompts) by adding the relevant retrieved data in context. This step
+uses prompt engineering techniques to communicate effectively with the LLM. The augmented prompt allows the large
+language models to generate an accurate answer to user queries.
+Update external data
+The next question may be—what if the external data becomes stale? To maintain current information for retrieval,
+asynchronously update the documents and update embedding representation of the documents. You can do this through
+automated real-time processes or periodic batch processing. This is a common challenge in data analytics—different
+data-science approaches to change management can be used.
+The following diagram shows the conceptual flow of using RAG with LLMs.
+ 
+ 
+What is the difference between Retrieval-Augmented Generation and
+semantic search?
+Semantic search enhances RAG results for organizations wanting to add vast external knowledge sources to their LLM
+applications. Modern enterprises store vast amounts of information like manuals, FAQs, research reports, customer
+service guides, and human resource document repositories across various systems. Context retrieval is challenging at
+scale and consequently lowers generative output quality.
+Semantic search technologies can scan large databases of disparate information and retrieve data more accurately. For
+example, they can answer questions such as, "How much was spent on machinery repairs last year?” by mapping the
+question to the relevant documents and returning specific text instead of search results. Developers can then use that
+answer to provide more context to the LLM.
+Conventional or keyword search solutions in RAG produce limited results for knowledge-intensive tasks. Developers
+must also deal with word embeddings, document chunking, and other complexities as they manually prepare their data.
+In contrast, semantic search technologies do all the work of knowledge base preparation so developers don't have to.
+They also generate semantically relevant passages and token words ordered by relevance to maximize the quality of the
+RAG payload.
+How can AWS support your Retrieval-Augmented Generation
+requirements?
+Amazon Bedrock is a fully-managed service that offers a choice of high-performing foundation models—along with a
+broad set of capabilities—to build generative AI applications while simplifying development and maintaining privacy
+and security. With knowledge bases for Amazon Bedrock, you can connect FMs to your data sources for RAG in just a
+few clicks. Vector conversions, retrievals, and improved output generation are all handled automatically.
+For organizations managing their own RAG, Amazon Kendra
+ is a highly-accurate enterprise search service powered by
+machine learning. It provides an optimized Kendra Retrieve API that you can use with Amazon Kendra’s high-accuracy
+
+What is RAG? - Retrieval-Augmented Generation AI Explained - AWS
+https://aws.amazon.com/what-is/retrieval-augmented-generation/[12/28/25, 6:17:17 PM]
+semantic ranker as an enterprise retriever for your RAG workflows. For example, with the Retrieve API, you can:
+Retrieve up to 100 semantically-relevant passages of up to 200 token words each, ordered by relevance.
+Use pre-built connectors to popular data technologies like Amazon Simple Storage Service, SharePoint,
+Confluence, and other websites.
+Support a wide range of document formats such as HTML, Word, PowerPoint, PDF, Excel, and text files.
+Filter responses based on those documents that the end-user permissions allow.
+Amazon also offers options for organizations who want to build more custom generative AI solutions. Amazon
+SageMaker JumpStart is a ML hub with FMs, built-in algorithms, and prebuilt ML solutions that you can deploy with
+just a few clicks. You can speed up RAG implementation by referring to existing SageMaker notebooks and code
+examples.
+Get started with Retrieval-Augmented Generation on AWS by creating a free account today
+Next Steps on AWS
+Check out additional product-related resources
+Innovate faster with the most comprehensive set of Generative AI services
+Sign up for a free account
+Instant get access to the AWS Free Tier.
+Sign up
+Start building in the console
+Get started building in the AWS management console.
+Sign in
+Create an AWS account
+Learn
+What Is AWS?
+What Is Cloud Computing?
+What Is Agentic AI?
+Cloud Computing Concepts Hub
+AWS Cloud Security
+What's New
+Blogs
+Press Releases
+Resources
+Getting Started
+Training
+
+What is RAG? - Retrieval-Augmented Generation AI Explained - AWS
+https://aws.amazon.com/what-is/retrieval-augmented-generation/[12/28/25, 6:17:17 PM]
+AWS Trust Center
+AWS Solutions Library
+Architecture Center
+Product and Technical FAQs
+Analyst Reports
+AWS Partners
+Developers
+Builder Center
+SDKs & Tools
+.NET on AWS
+Python on AWS
+Java on AWS
+PHP on AWS
+JavaScript on AWS
+Help
+Contact Us
+File a Support Ticket
+AWS re:Post
+Knowledge Center
+AWS Support Overview
+Get Expert Help
+AWS Accessibility
+Legal
+English
+Back to top
+Amazon is an Equal Opportunity Employer: Minority / Women / Disability / Veteran / Gender Identity / Sexual
+Orientation / Age.
+x
+facebooklinkedininstagramtwitchyoutubepodcastsemail
+Privacy
+Site terms
+Cookie Preferences
+© 2025, Amazon Web Services, Inc. or its affiliates. All rights reserved.
+
+================================================================================
+DOCUMENT: What is retrieval augmented generation.docx
+================================================================================
+
+What is retrieval augmented generation (RAG)?
+Retrieval augmented generation, or RAG, is an architecture for optimizing the performance of an artificial intelligence (AI) model by connecting it with external knowledge bases. RAG helps large language models (LLMs) deliver more relevant responses at a higher quality.
+Generative AI (gen AI) models are trained on large datasets and refer to this information to generate outputs. However, training datasets are finite and limited to the information the AI developer can access—public domain works, internet articles, social media content and other publicly accessible data.
+RAG allows generative AI models to access additional external knowledge bases, such as internal organizational data, scholarly journals and specialized datasets. By integrating relevant information into the generation process, chatbots and other natural language processing (NLP) tools can create more accurate domain-specific content without needing further training.
+
+What is Retrieval-Augmented Generation (RAG)? (6:32 min)
+What are the benefits of RAG?
+RAG empowers organizations to avoid high retraining costs when adapting generative AI models to domain-specific use cases. Enterprises can use RAG to complete gaps in a machine learning model’s knowledge base so it can provide better answers.
+The primary benefits of RAG include:
+Cost-efficient AI implementation and AI scaling
+Access to current domain-specific data
+Lower risk of AI hallucinations
+Increased user trust
+Expanded use cases
+Enhanced developer control and model maintenance
+Greater data security
+Cost-efficient AI implementation and AI scaling
+When implementing AI, most organizations first select a foundation model: the deep-learning models that serve as the basis for the development of more advanced versions. Foundation models typically have generalized knowledge bases populated with publicly available training data, such as internet content available at the time of training.
+Retraining a foundation model or fine-tuning it—where a foundation model is further trained on new data in a smaller, domain-specific dataset—is computationally expensive and resource-intensive. The model adjusts some or all of its parameters to adjust its performance to the new specialized data.
+With RAG, enterprises can use internal, authoritative data sources and gain similar model performance increases without retraining. Enterprises can scale their implementation of AI applications as needed while mitigating cost and resource requirement increases.
+Access to current and domain-specific data
+Generative AI models have a knowledge cutoff, the point at which their training data was last updated. As a model ages further past its knowledge cutoff, it loses relevance over time. RAG systems connect models with supplemental external data in real-time and incorporate up-to-date information into generated responses.
+Enterprises use RAG to equip models with specific information such as proprietary customer data, authoritative research and other relevant documents.
+RAG models can also connect to the internet with application programming interfaces (APIs) and gain access to real-time social media feeds and consumer reviews for a better understanding of market sentiment. Meanwhile, access to breaking news and search engines can lead to more accurate responses as models incorporate the retrieved information into the text-generation process.
+Lower risk of AI hallucinations
+Generative AI models such as OpenAI’s GPT work by detecting patterns in their data, then using those patterns to predict the most likely outcomes to user inputs. Sometimes models detect patterns that don’t exist. A hallucination or confabulation happens when models present incorrect or made-up information as though it is factual.
+RAG anchors LLMs in specific knowledge backed by factual, authoritative and current data. Compared to a generative model operating only on its training data, RAG models tend to provide more accurate answers within the contexts of their external data. While RAG can reduce the risk of hallucinations, it cannot make a model error-proof.
+Increased user trust
+Chatbots, a common generative AI implementation, answer questions posed by human users. For a chatbot such as ChatGPT to be successful, users need to view its output as trustworthy. RAG models can include citations to the knowledge sources in their external data as part of their responses.
+When RAG models cite their sources, human users can verify those outputs to confirm accuracy while consulting the cited works for follow-up clarification and additional information. Corporate data storage is often a complex and siloed maze. RAG responses with citations point users directly toward the materials they need.
+Expanded use cases
+Access to more data means that one model can handle a wider range of prompts. Enterprises can optimize models and gain more value from them by broadening their knowledge bases, in turn expanding the contexts in which those models generate reliable results.
+By combining generative AI with retrieval systems, RAG models can retrieve and integrate information from multiple data sources in response to complex queries.
+Enhanced developer control and model maintenance
+Modern organizations constantly process massive quantities of data, from order inputs to market projections to employee turnover and more. Effective data pipeline construction and data storage is paramount for strong RAG implementation.
+At the same time, developers and data scientists can tweak the data sources to which models have access at any time. Repositioning a model from one task to another becomes a task of adjusting its external knowledge sources as opposed to fine-tuning or retraining. If fine-tuning is needed, developers can prioritize that work instead of managing the model’s data sources.
+Greater data security
+Because RAG connects a model to external knowledge sources rather than incorporating that knowledge into the model’s training data, it maintains a divide between the model and that external knowledge. Enterprises can use RAG to preserve first-party data while simultaneously granting models access to it—access that can be revoked at any time.
+However, enterprises must be vigilant to maintain the security of the external databases themselves. RAG uses vector databases, which use embeddings to convert data points to numerical representations. If these databases are breached, attackers can reverse the vector embedding process and access the original data, especially if the vector database is unencrypted.
+Industry newsletter
+The latest AI trends, brought to you by experts
+Get curated insights on the most important—and intriguing—AI news. Subscribe to our weekly Think newsletter. See the IBM Privacy Statement.
+Top of Form
+Business email
+Subscribe
+Bottom of Form
+RAG use cases
+RAG systems essentially enable users to query databases with conversational language. The data-powered question-answering abilities of RAG systems have been applied across a range of use cases, including:
+Specialized chatbots and virtual assistants
+ 
+Research
+ 
+Content generation
+ 
+Market analysis and product development
+ 
+Knowledge engines
+ 
+Recommendation services
+Specialized chatbots and virtual assistants
+Enterprises wanting to automate customer support might find that their AI models lack the specialized knowledge needed to adequately assist customers. RAG AI systems plug models into internal data to equip customer support chatbots with the latest knowledge about a company’s products, services and policies.
+The same principle applies to AI avatars and personal assistants. Connecting the underlying model with the user’s personal data and referring to previous interactions provides a more customized user experience.
+Research
+Able to read internal documents and interface with search engines, RAG models excel at research. Financial analysts can generate client-specific reports with up-to-date market information and prior investment activity, while medical professionals can engage with patient and institutional records.
+Content generation
+The ability of RAG models to cite authoritative sources can lead to more reliable content generation. While all generative AI models can hallucinate, RAG makes it easier for users to verify outputs for accuracy.
+Market analysis and product development
+Business leaders can consult social media trends, competitor activity, sector-relevant breaking news and other online sources to better inform business decisions. Meanwhile, product managers can reference customer feedback and user behaviors when considering future development choices.
+Knowledge engines
+RAG systems can empower employees with internal company information. Streamlined onboarding processes, faster HR support and on-demand guidance for employees in the field are just a few ways businesses can use RAG to enhance job performance.
+Recommendation services
+By analyzing previous user behavior and comparing that with current offerings, RAG systems power more accurate recommendation services. An e-commerce platform and content delivery service can both use RAG to keep customers engaged and spending.
+AI Academy
+
+The rise of generative AI for business
+Learn about the historical rise of generative AI and what it means for business.
+
+Go to episode 
+How does RAG work?
+RAG works by combining information retrieval models with generative AI models to produce more authoritative content. RAG systems query a knowledge base and add more context to a user prompt before generating a response.
+Standard LLMs source information from their training datasets. RAG adds an information retrieval component to the AI workflow, gathering relevant information and feeding that to the generative AI model to enhance response quality and utility.
+RAG systems follow a five-stage process:
+
+The user submits a prompt.
+ 
+The information retrieval model queries the knowledge base for relevant data.
+ 
+Relevant information is returned from the knowledge base to the integration layer.
+ 
+The RAG system engineers an augmented prompt to the LLM with enhanced context from the retrieved data.
+ 
+The LLM generates an output and returns an output to the user.
+This process showcases how RAG gets its name. The RAG system retrieves data from the knowledge base, augments the prompt with added context and generates a response.
+Components of a RAG system
+RAG systems contain four primary components:
+The knowledge base: The external data repository for the system.
+The retriever: An AI model that searches the knowledge base for relevant data.
+The integration layer: The portion of the RAG architecture that coordinates its overall functioning.
+The generator: A generative AI model that creates an output based on the user query and retrieved data.
+Other components might include a ranker, which ranks retrieved data based on relevance, and an output handler, which formats the generated response for the user.
+The knowledge base
+The first stage in constructing a RAG system is creating a queryable knowledge base. The external data repository can contain data from countless sources: PDFs, documents, guides, websites, audio files and more. Much of this will be unstructured data, which means that it hasn’t yet been labeled.
+RAG systems use a process called embedding to transform data into numerical representations called vectors. The embedding model vectorizes the data in a multidimensional mathematical space, arranging the data points by similarity. Data points judged to be closer in relevance to each other are placed closely together.
+Knowledge bases must be continually updated to maintain the RAG system’s quality and relevance.
+LLM inputs are limited to the context window of the model: the amount of data it can process without losing context. Chunking a document into smaller sizes helps ensure that the resulting embeddings will not overwhelm the context window of the LLM in the RAG system.
+Chunk size is an important hyperparameter for the RAG system. When chunks are too large, the data points can become too general and fail to correspond directly to potential user queries. But if chunks are too small, the data points can lose semantic coherency.
+The retriever
+Vectorizing the data prepares the knowledge base for semantic vector search, a technique that identifies points in the database that are similar to the user’s query. Semantic search machine learning algorithms can query massive databases and quickly identify relevant information, reducing latency as compared to traditional keyword searches.
+The information retrieval model transforms the user’s query into an embedding and then searches the knowledge base for similar embeddings. Then, its findings are returned from the knowledge base.
+The integration layer
+The integration layer is the center of the RAG architecture, coordinating the processes and passing data around the network. With the added data from the knowledge base, the RAG system creates a new prompt for the LLM component. This prompt consists of the original user query plus the enhanced context returned by the retrieval model.
+RAG systems employ various prompt engineering techniques to automate effective prompt creation and help the LLM return the best possible response. Meanwhile, LLM orchestration frameworks such as the open source LangChain and LlamaIndex or IBM® watsonx Orchestrate™ govern the overall functioning of an AI system.
+The generator
+The generator creates an output based on the augmented prompt fed to it by the integration layer. The prompt synthesizes the user input with the retrieved data and instructs the generator to consider this data in its response. Generators are typically pretrained language models, such as GPT, Claude or Llama.
+What is the difference between RAG and fine-tuning?
+
+RAG vs. Fine Tuning (8:57 min)
+The difference between RAG and fine-tuning is that RAG lets an LLM query an external data source while fine-tuning trains an LLM on domain-specific data. Both have the same general goal: to make an LLM perform better in a specified domain.
+RAG and fine-tuning are often contrasted but can be used in tandem. Fine-tuning increases a model’s familiarity with the intended domain and output requirements, while RAG assists the model in generating relevant, high-quality outputs.
+
+================================================================================
+DOCUMENT: What Is Retrieval-Augmented Generation, aka RAG?.docx
+================================================================================
+
+To understand the latest advancements in generative AI, imagine a courtroom.
+Judges hear and decide cases based on their general understanding of the law. Sometimes a case — like a malpractice suit or a labor dispute — requires special expertise, so judges send court clerks to a law library, looking for precedents and specific cases they can cite.
+Like a good judge, large language models (LLMs) can respond to a wide variety of human queries. But to deliver authoritative answers — grounded in specific court proceedings or similar ones  — the model needs to be provided that information.
+The court clerk of AI is a process called retrieval-augmented generation, or RAG for short.
+How It Got Named ‘RAG’
+Patrick Lewis, lead author of the 2020 paper that coined the term, apologized for the unflattering acronym that now describes a growing family of methods across hundreds of papers and dozens of commercial services he believes represent the future of generative AI.
+“We definitely would have put more thought into the name had we known our work would become so widespread,” Lewis said in an interview from Singapore, where he was sharing his ideas with a regional conference of database developers.
+“We always planned to have a nicer sounding name, but when it came time to write the paper, no one had a better idea,” said Lewis, who now leads a RAG team at AI startup Cohere.
+So, What Is Retrieval-Augmented Generation (RAG)?
+Retrieval-augmented generation is a technique for enhancing the accuracy and reliability of generative AI models with information fetched from specific and relevant data sources.
+In other words, it fills a gap in how LLMs work. Under the hood, LLMs are neural networks, typically measured by how many parameters they contain. An LLM’s parameters essentially represent the general patterns of how humans use words to form sentences.
+That deep understanding, sometimes called parameterized knowledge, makes LLMs useful in responding to general prompts. However, when users need authoritative, source-grounded answers rather than broad knowledge alone, RAG can provide the necessary depth and accuracy.
+Combining Internal, External Resources
+Lewis and colleagues developed retrieval-augmented generation to link generative AI services to external resources, especially ones rich in the latest technical details.
+The paper, with coauthors from the former Facebook AI Research (now Meta AI), University College London and New York University, called RAG “a general-purpose fine-tuning recipe” because it can be used by nearly any LLM to connect with practically any external resource.
+Building User Trust
+Retrieval-augmented generation gives models sources they can cite, like footnotes in a research paper, so users can check any claims. That builds trust.
+What’s more, the technique can help models clear up ambiguity in a user query. It also reduces the possibility that a model will give a very plausible but incorrect answer, a phenomenon called hallucination.
+Another great advantage of RAG is it’s relatively easy. A blog by Lewis and three of the paper’s coauthors said developers can implement the process with as few as five lines of code.
+That makes the method faster and less expensive than retraining a model with additional datasets. And it lets users hot-swap new sources on the fly.
+How People Are Using RAG
+With retrieval-augmented generation, users can essentially have conversations with data repositories, opening up new kinds of experiences. This means the applications for RAG could be multiple times the number of available datasets.
+For example, a generative AI model supplemented with a medical index could be a great assistant for a doctor or nurse. Financial analysts would benefit from an assistant linked to market data.
+In fact, almost any business can turn its technical or policy manuals, videos or logs into resources called knowledge bases that can enhance LLMs. These sources can enable use cases such as customer or field support, employee training and developer productivity.
+The broad potential is why companies including AWS, IBM, Glean, Google, Microsoft, NVIDIA, Oracle and Pinecone are adopting RAG.
+Getting Started With Retrieval-Augmented Generation 
+The NVIDIA AI Blueprint for RAG gives developers a foundational starting point for using NVIDIA NeMo Retriever models to build scalable, customizable data extraction and retrieval pipelines that deliver high accuracy and throughput.  
+The blueprint can be used as is, or combined with other NVIDIA Blueprints for advanced use cases including AI agents for enterprise research and AI assistants for customer service. For example, the AI-Q NVIDIA Blueprint enables developers to connect AI agents to enterprise data and use reasoning and tools to distill in-depth source materials with efficiency and precision. 
+In addition, developers and IT teams can use an NVIDIA Launchable to experiment with deploying a RAG pipeline. A significant part of this RAG pipeline is NVIDIA NeMo Retriever, which provides leading, large-scale retrieval accuracy, and NVIDIA NIM microservices for simplifying secure, high-performance AI deployment across clouds, data centers and workstations. These are offered as part of the NVIDIA AI Enterprise software platform for accelerating AI development and deployment.
+Getting the best performance for RAG workflows requires massive amounts of memory and compute to move and process data. The NVIDIA GH200 Grace Hopper Superchip, with its 288GB of fast HBM3e memory and 8 petaflops of compute, is ideal — it can deliver a 150x speedup over using a CPU.
+Once companies get familiar with RAG, they can combine a variety of off-the-shelf or custom LLMs with internal or external knowledge bases to create a wide range of assistants that help their employees and customers.
+There are several environments to get started with RAG. LLMs are debuting on Windows PCs, thanks to NVIDIA software that enables all sorts of applications users can access even on their laptops.
+An example application for RAG on a PC.
+PCs equipped with NVIDIA RTX GPUs can now run some AI models locally. By using RAG on a PC, users can link to a private knowledge source – whether that be emails, notes or articles – to improve responses. The user can then feel confident that their data source, prompts and response all remain private and secure.
+This blog provides an example of RAG accelerated by TensorRT-LLM for Windows to get better results fast.
+The History of RAG 
+The roots of the technique go back at least to the early 1970s. That’s when researchers in information retrieval prototyped what they called question-answering systems, apps that use natural language processing (NLP) to access text, initially in narrow topics such as baseball.
+The concepts behind this kind of text mining have remained fairly constant over the years. But the machine learning engines driving them have grown significantly, increasing their usefulness and popularity.
+In the mid-1990s, the Ask Jeeves service, now Ask.com, popularized question answering with its mascot of a well-dressed valet. IBM’s Watson became a TV celebrity in 2011 when it handily beat two human champions on the Jeopardy! game show.
+
+Today, LLMs are taking question-answering systems to a whole new level.
+Insights From a London Lab
+The seminal 2020 paper arrived as Lewis was pursuing a doctorate in NLP at University College London and working for Meta at a new London AI lab. The team was searching for ways to pack more knowledge into an LLM’s parameters and using a benchmark it developed to measure its progress.
+Building on earlier methods and inspired by a paper from Google researchers, the group “had this compelling vision of a trained system that had a retrieval index in the middle of it, so it could learn and generate any text output you wanted,” Lewis recalled.
+The IBM Watson question-answering system became a celebrity when it won big on the TV game show Jeopardy!
+When Lewis plugged into the work in progress a promising retrieval system from another Meta team, the first results were unexpectedly impressive.
+“I showed my supervisor and he said, ‘Whoa, take the win. This sort of thing doesn’t happen very often,’ because these workflows can be hard to set up correctly the first time,” he said.
+Lewis also credits major contributions from team members Ethan Perez and Douwe Kiela, then of New York University and Facebook AI Research, respectively.
+When complete, the work, which ran on a cluster of NVIDIA GPUs, showed how to make generative AI models more authoritative and trustworthy. It’s since been cited by hundreds of papers that amplified and extended the concepts in what continues to be an active area of research.
+How RAG Works
+At a high level, here’s how RAG works. 
+When users ask an LLM a question, the AI model sends the query to another model that converts it into a numeric format so machines can read it. The numeric version of the query is sometimes called an embedding or a vector.
+In retrieval-augmented generation, LLMs are enhanced with embedding and reranking models, storing knowledge in a vector database for precise query retrieval.
+The embedding model then compares these numeric values to vectors in a machine-readable index of an available knowledge base. When it finds a match or multiple matches, it retrieves the related data, converts it to human-readable words and passes it back to the LLM.
+Finally, the LLM combines the retrieved words and its own response to the query into a final answer it presents to the user, potentially citing sources the embedding model found.
+Keeping Sources Current
+In the background, the embedding model continuously creates and updates machine-readable indices, sometimes called vector databases, for new and updated knowledge bases as they become available.
+Retrieval-augmented generation combines LLMs with embedding models and vector databases.
+Many developers find LangChain, an open-source library, can be particularly useful in chaining together LLMs, embedding models and knowledge bases. NVIDIA uses LangChain in its reference architecture for retrieval-augmented generation.
+The LangChain community provides its own description of a RAG process.
+The future of generative AI lies in agentic AI — where LLMs and knowledge bases are dynamically orchestrated to create autonomous assistants. These AI-driven agents can enhance decision-making, adapt to complex tasks and deliver authoritative, verifiable results for users.
