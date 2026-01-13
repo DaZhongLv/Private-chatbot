@@ -95,6 +95,8 @@ Pygments==2.19.2
 pyparsing==3.2.5
 pypdf==6.4.1
 PySocks==1.7.1
+pytest
+pytest-mock
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-multipart==0.0.20
